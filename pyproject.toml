@@ -6,7 +6,7 @@ authors = [
 description = "ai ocr agent"
 requires-python = ">=3.10"
 readme = "README.md"
-version = "0.0.2"
+dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
 ]
