@@ -159,7 +159,30 @@
       "label": "Grand Total",
       "read_only": 1
     },
-
+    {
+      "fieldname": "financial_risk",
+      "fieldtype": "Data",
+      "label": "Financial Risk",
+      "read_only": 1
+    },
+    {
+      "fieldname": "calculated_grand_total",
+      "fieldtype": "Currency",
+      "label": "Calculated Grand Total",
+      "read_only": 1
+    },
+    {
+      "fieldname": "financial_mismatch",
+      "fieldtype": "Currency",
+      "label": "Financial Mismatch",
+      "read_only": 1
+    },
+    {
+      "fieldname": "is_financial_valid",
+      "fieldtype": "Check",
+      "label": "Is Financial Valid",
+      "read_only": 1
+    },
     {
       "fieldname": "raw_section",
       "fieldtype": "Section Break",

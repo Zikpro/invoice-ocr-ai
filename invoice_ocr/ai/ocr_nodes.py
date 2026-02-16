@@ -76,14 +76,79 @@ def extract_items(state: dict):
 # ============================================================
 # TAXES
 # ============================================================
+def extract_taxes(state):
+    import re
 
-def extract_taxes(state: dict):
-    from .prompts import TAX_PROMPT
+    text = state.get("ocr_text", "")
+    lines = text.splitlines()
 
-    prompt = TAX_PROMPT + "\n\nOCR_TEXT:\n" + state["ocr_text"]
-    result = call_deepinfra(prompt)
+    taxes = []
 
-    state["taxes"] = result
+    for i, line in enumerate(lines):
+
+        clean = line.strip()
+        lower = clean.lower()
+
+        if not clean:
+            continue
+
+        # --------------------------------------------------
+        # Case 1: VAT with rate + amount
+        # --------------------------------------------------
+
+        vat_match = re.search(
+            r"vat\s*@?\s*(\d+(?:\.\d+)?)\s*.*?([£$€₹₨]?\s?[\d,]+\.\d{2})",
+            clean,
+            re.IGNORECASE
+        )
+
+        if vat_match:
+            rate = float(vat_match.group(1))
+            amount = float(
+                vat_match.group(2)
+                .replace("£", "")
+                .replace(",", "")
+            )
+
+            taxes.append({
+                "charge_type": "Actual",
+                "account_head": None,
+                "label": "VAT",
+                "rate": rate,
+                "amount": amount
+            })
+
+            continue
+
+        # --------------------------------------------------
+        # Case 2: VAT label only (amount missing)
+        # --------------------------------------------------
+
+        if "vat" in lower:
+
+            # Try next line for amount
+            if i + 1 < len(lines):
+                next_line = lines[i + 1]
+
+                amount_match = re.search(
+                    r"[£$€₹₨]?\s?([\d,]+\.\d{2})",
+                    next_line
+                )
+
+                if amount_match:
+                    amount = float(
+                        amount_match.group(1).replace(",", "")
+                    )
+
+                    taxes.append({
+                        "charge_type": "Actual",
+                        "account_head": None,
+                        "label": "VAT",
+                        "rate": 0,
+                        "amount": amount
+                    })
+
+    state["taxes"] = taxes
     return state
 
 
