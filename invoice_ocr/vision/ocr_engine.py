@@ -4,31 +4,18 @@ import mimetypes
 import requests
 import frappe
 from frappe import _
+from pypdf import PdfReader
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-OCR"
+VISION_MODEL = "deepseek-ai/DeepSeek-OCR"
+TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
 # ============================================================
-# FILE ENCODING (FULL PATH + FILE_URL SAFE)
+# FILE ENCODING (IMAGE ONLY)
 # ============================================================
 
-def _encode_file_to_base64(file_input):
-    """
-    Accepts:
-    - Full absolute file path
-    - OR Frappe file_url
-    """
-
-    # Case 1: Already full system path
-    if os.path.exists(file_input):
-        file_path = file_input
-
-    else:
-        # Case 2: file_url → convert to system path
-        file_url = file_input.lstrip("/")
-        file_path = frappe.get_site_path(file_url)
-
+def _encode_file_to_base64(file_path):
     if not os.path.exists(file_path):
         frappe.throw(_("File not found"))
 
@@ -36,37 +23,42 @@ def _encode_file_to_base64(file_input):
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-# ============================================================
-# MIME DETECTION (FULL PATH SAFE)
-# ============================================================
-
-def _detect_mime_type(file_input):
-
-    # If full path → use directly
-    if os.path.exists(file_input):
-        mime, _ = mimetypes.guess_type(file_input)
-    else:
-        mime, _ = mimetypes.guess_type(file_input)
-
+def _detect_mime_type(file_path):
+    mime, _ = mimetypes.guess_type(file_path)
     return mime or "image/png"
 
 
 # ============================================================
-# MAIN OCR FUNCTION
+# PDF TEXT EXTRACTION (Cloud Safe)
 # ============================================================
 
-def run_vision_ocr(file_input):
+def extract_pdf_text(file_path):
+    reader = PdfReader(file_path)
+    text = ""
+
+    for page in reader.pages:
+        extracted = page.extract_text()
+        if extracted:
+            text += extracted + "\n"
+
+    return text.strip()
+
+
+# ============================================================
+# IMAGE OCR (VISION MODEL)
+# ============================================================
+
+def run_image_ocr(file_path):
 
     api_key = frappe.conf.get("deepinfra_api_key")
-
     if not api_key:
-        frappe.throw(_("DEEPINFRA API key not configured"))
+        frappe.throw(_("DeepInfra API key not configured"))
 
-    base64_file = _encode_file_to_base64(file_input)
-    mime_type = _detect_mime_type(file_input)
+    base64_file = _encode_file_to_base64(file_path)
+    mime_type = _detect_mime_type(file_path)
 
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": VISION_MODEL,
         "messages": [
             {
                 "role": "user",
@@ -104,3 +96,20 @@ def run_vision_ocr(file_input):
         return " ".join(c.get("text", "") for c in content)
 
     return content.strip()
+
+
+# ============================================================
+# UNIVERSAL OCR ENTRY POINT
+# ============================================================
+
+def run_vision_ocr(file_path):
+    """
+    Smart handler:
+    - If PDF → extract text
+    - If Image → Vision OCR
+    """
+
+    if file_path.lower().endswith(".pdf"):
+        return extract_pdf_text(file_path)
+
+    return run_image_ocr(file_path)

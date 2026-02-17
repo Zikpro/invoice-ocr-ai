@@ -162,4 +162,3 @@ def score_confidence(state: dict):
     state["confidence"] = calculate_confidence(state)
 
     return state
-

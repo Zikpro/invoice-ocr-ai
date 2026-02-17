@@ -1,48 +1,86 @@
 import frappe
+import difflib
 
 
-def update_supplier_memory(doc):
+def intelligent_supplier_match(detected_name: str):
     """
-    Learn supplier behavior after invoice is posted
+    Enterprise-safe supplier detection
+    Returns:
+        {
+            "supplier": supplier_name or None,
+            "confidence": int,
+            "multiple_matches": bool
+        }
     """
 
-    if not doc.supplier:
-        return
+    if not detected_name:
+        return {"supplier": None, "confidence": 0, "multiple_matches": False}
 
-    profile = frappe.db.exists(
-        "Supplier AI Profile",
-        {"supplier": doc.supplier}
+    detected_name = detected_name.strip().lower()
+
+    suppliers = frappe.get_all(
+        "Supplier",
+        fields=["name", "supplier_name"]
     )
 
-    if profile:
-        profile = frappe.get_doc("Supplier AI Profile", profile)
-    else:
-        profile = frappe.new_doc("Supplier AI Profile")
-        profile.supplier = doc.supplier
-        profile.invoice_count = 0
+    # ----------------------------
+    # 1️⃣ Exact Match (Strongest)
+    # ----------------------------
+    for s in suppliers:
+        if s.supplier_name and s.supplier_name.lower() == detected_name:
+            return {
+                "supplier": s.name,
+                "confidence": 100,
+                "multiple_matches": False
+            }
 
-    # ---------------- Expense Account Learning ----------------
-    if doc.items:
-        first_item = doc.items[0]
-        profile.default_expense_account = first_item.expense_account
+    # ----------------------------
+    # 2️⃣ Fuzzy Similarity
+    # ----------------------------
+    scores = []
 
-    # ---------------- Tax Learning ----------------
-    if doc.taxes:
-        first_tax = doc.taxes[0]
-        profile.default_tax_account = first_tax.account_head
+    for s in suppliers:
+        if not s.supplier_name:
+            continue
 
-    # ---------------- Currency Learning ----------------
-    profile.last_currency = doc.currency
+        score = difflib.SequenceMatcher(
+            None,
+            detected_name,
+            s.supplier_name.lower()
+        ).ratio()
 
-    # ---------------- Average Invoice ----------------
-    total = doc.grand_total or 0
+        scores.append((score, s.name))
 
-    count = profile.invoice_count or 0
-    avg = profile.avg_invoice_amount or 0
+    if not scores:
+        return {"supplier": None, "confidence": 0, "multiple_matches": False}
 
-    new_avg = ((avg * count) + total) / (count + 1)
+    scores.sort(reverse=True)
 
-    profile.avg_invoice_amount = new_avg
-    profile.invoice_count = count + 1
+    best_score, best_supplier = scores[0]
 
-    profile.save(ignore_permissions=True)
+    # Convert to %
+    confidence = int(best_score * 100)
+
+    # ----------------------------
+    # 3️⃣ If too many similar matches
+    # ----------------------------
+    close_matches = [s for s in scores if s[0] > 0.75]
+
+    if len(close_matches) > 1:
+        return {
+            "supplier": None,
+            "confidence": confidence,
+            "multiple_matches": True
+        }
+
+    # ----------------------------
+    # 4️⃣ Threshold rule
+    # ----------------------------
+    if confidence >= 80:
+        return {
+            "supplier": best_supplier,
+            "confidence": confidence,
+            "multiple_matches": False
+        }
+
+    return {"supplier": None, "confidence": confidence, "multiple_matches": False}

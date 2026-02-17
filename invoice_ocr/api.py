@@ -1,32 +1,8 @@
 import re
 import os
-import tempfile
 import frappe
-
-from pdf2image import convert_from_path
+from frappe.utils import getdate
 from invoice_ocr.vision.ocr_engine import run_vision_ocr
-
-
-# ============================================================
-# PDF → IMAGE CONVERTER
-# ============================================================
-
-def convert_pdf_to_image(file_path):
-    """
-    Convert first page of PDF to PNG
-    Returns temporary image file path
-    """
-    images = convert_from_path(file_path, dpi=300)
-
-    if not images:
-        return None
-
-    temp_dir = tempfile.gettempdir()
-    output_path = os.path.join(temp_dir, "converted_invoice.png")
-
-    images[0].save(output_path, "PNG")
-
-    return output_path
 
 
 # ============================================================
@@ -73,13 +49,12 @@ def extract_any_date(text):
 
 
 # ============================================================
-# RUN OCR PIPELINE (FULL STABLE VERSION)
+# RUN OCR
 # ============================================================
 
 @frappe.whitelist()
 def run_ocr(docname):
 
-    from frappe.utils import getdate
     from invoice_ocr.ai.ocr_nodes import (
         extract_header,
         extract_items,
@@ -91,53 +66,35 @@ def run_ocr(docname):
     from invoice_ocr.intelligence.financial_validator import validate_financials
 
     doc = frappe.get_doc("Invoice OCR", docname)
-    # ========================================================
-    # 1️⃣ FILE VALIDATION (FRAPPE SAFE METHOD)
-    # ========================================================
+
+    # -----------------------------
+    # FILE FETCH SAFE
+    # -----------------------------
 
     if not doc.invoice_file:
         frappe.throw("Please upload invoice file before running OCR")
 
-    # Fetch File Doc properly
     file_doc = frappe.get_doc("File", {"file_url": doc.invoice_file})
-
-    if not file_doc:
-        frappe.throw("File record not found in system")
-
-    # Get real path safely
     file_path = file_doc.get_full_path()
 
     if not os.path.exists(file_path):
-        frappe.log_error(file_path, "Invoice File Not Found")
         frappe.throw("Invoice file not found on server")
 
-
-    # ========================================================
-    # 2️⃣ VISION OCR (PDF + IMAGE SAFE)
-    # ========================================================
+    # -----------------------------
+    # OCR (PDF + IMAGE SAFE)
+    # -----------------------------
 
     try:
-
-        if file_path.lower().endswith(".pdf"):
-            image_path = convert_pdf_to_image(file_path)
-
-            if not image_path or not os.path.exists(image_path):
-                frappe.throw("PDF conversion failed")
-
-            raw = run_vision_ocr(image_path)
-
-        else:
-            raw = run_vision_ocr(file_path)
-
+        raw = run_vision_ocr(file_path)
     except Exception as e:
         frappe.log_error(str(e), "OCR Processing Failed")
         frappe.throw("OCR processing failed. Please check error logs.")
 
     doc.raw_ocr_text = raw
 
-    # ========================================================
-    # 3️⃣ AI EXTRACTION PIPELINE
-    # ========================================================
+    # -----------------------------
+    # AI PIPELINE
+    # -----------------------------
 
     state = {
         "ocr_text": raw,
@@ -151,27 +108,21 @@ def run_ocr(docname):
     state = extract_items(state)
     state = extract_taxes(state)
     state = score_confidence(state)
-
-    # ========================================================
-    # 4️⃣ LINE CLASSIFICATION
-    # ========================================================
-
     state = classify_lines(state)
 
     header = state.get("header") or {}
     confidence = state.get("confidence", 60)
 
-    # ========================================================
-    # 5️⃣ SUPPLIER MATCHING
-    # ========================================================
+    # -----------------------------
+    # SUPPLIER MATCHING
+    # -----------------------------
 
+    supplier_name = header.get("supplier_name")
     supplier_meta = {}
     detected_supplier = None
-    supplier_name = header.get("supplier_name")
 
     if supplier_name:
         result = intelligent_supplier_match(supplier_name)
-
         if isinstance(result, dict):
             detected_supplier = result.get("supplier")
             supplier_meta = result
@@ -183,16 +134,13 @@ def run_ocr(docname):
 
     state["supplier_match_meta"] = supplier_meta
 
-    # ========================================================
-    # 6️⃣ SAFE HEADER SAVE (DATE FALLBACK)
-    # ========================================================
+    # -----------------------------
+    # HEADER SAVE
+    # -----------------------------
 
     doc.invoice_number = header.get("invoice_number")
 
-    raw_date = header.get("invoice_date")
-
-    if not raw_date:
-        raw_date = extract_any_date(raw)
+    raw_date = header.get("invoice_date") or extract_any_date(raw)
 
     try:
         doc.invoice_date = getdate(raw_date) if raw_date else None
@@ -202,16 +150,15 @@ def run_ocr(docname):
     if not doc.currency:
         doc.currency = header.get("currency") or detect_currency(raw)
 
-    # ========================================================
-    # 7️⃣ BUILD ITEMS (ROBUST VERSION)
-    # ========================================================
+    # -----------------------------
+    # BUILD ITEMS (ERP SAFE)
+    # -----------------------------
 
-    doc.items = []
+    doc.set("items", [])
     net_total = 0
 
     for it in state.get("items", []):
 
-    # ✅ Accept both VALID_ITEM and HEADER_ROW
         if it.get("classification") not in ["VALID_ITEM", "HEADER_ROW"]:
             continue
 
@@ -223,8 +170,7 @@ def run_ocr(docname):
         rate = float(it.get("rate") or 0)
         amount = float(it.get("amount") or (qty * rate))
 
-        # Skip zero-value junk rows
-        if amount == 0 and rate == 0:
+        if amount <= 0:
             continue
 
         net_total += amount
@@ -232,26 +178,29 @@ def run_ocr(docname):
         doc.append("items", {
             "item_name": item_name,
             "qty": qty,
+            "stock_qty": qty,
             "rate": rate,
+            "amount": amount,
+            "base_rate": rate,
+            "base_amount": amount,
             "uom": "Nos"
         })
 
-    # ========================================================
-    # 9️⃣ GRAND TOTAL DETECTION
-    # ========================================================
+    # -----------------------------
+    # GRAND TOTAL DETECT
+    # -----------------------------
 
     detected_grand_total = extract_grand_total(raw)
 
-    # ========================================================
-    # 🔟 PREPARE FINANCIAL STATE
-    # ========================================================
+    # -----------------------------
+    # TAX FALLBACK
+    # -----------------------------
 
     state["net_total"] = net_total
     state["detected_grand_total"] = detected_grand_total
 
-    # 🔥 Fallback VAT calculation BEFORE building tax table
     if (
-        (not state.get("taxes"))
+        not state.get("taxes")
         and detected_grand_total
         and net_total
     ):
@@ -260,31 +209,24 @@ def run_ocr(docname):
         if calculated_tax > 0:
             state["taxes"] = [{
                 "charge_type": "Actual",
-                "account_head": None,
                 "label": "Auto VAT",
                 "rate": 0,
                 "amount": calculated_tax
             }]
 
-    # ========================================================
-    # 8️⃣ BUILD TAXES (NOW AFTER FALLBACK)
-    # ========================================================
+    # -----------------------------
+    # BUILD TAXES (ERP SAFE)
+    # -----------------------------
 
     doc.set("taxes", [])
     tax_total = 0
 
-    company = frappe.defaults.get_user_default("Company")
+    company = frappe.defaults.get_user_default("Company") \
+        or frappe.db.get_single_value("Global Defaults", "default_company")
 
-    if not company:
-        company = frappe.db.get_single_value("Global Defaults", "default_company")
-
-    valid_tax_account = frappe.db.get_value(
+    tax_account = frappe.db.get_value(
         "Account",
-        {
-            "company": company,
-            "account_type": "Tax",
-            "is_group": 0
-        },
+        {"company": company, "account_type": "Tax", "is_group": 0},
         "name"
     )
 
@@ -299,18 +241,18 @@ def run_ocr(docname):
 
         doc.append("taxes", {
             "charge_type": tx.get("charge_type") or "Actual",
-            "account_head": valid_tax_account,
+            "account_head": tax_account,
             "description": tx.get("label") or "VAT",
             "rate": float(tx.get("rate") or 0),
-            "tax_amount": amount
+            "tax_amount": amount,
+            "base_tax_amount": amount
         })
 
     state["tax_total"] = tax_total
-    doc.tax_total = tax_total
 
-    # ========================================================
-    # 🔟 FINANCIAL VALIDATION
-    # ========================================================
+    # -----------------------------
+    # FINANCIAL VALIDATION
+    # -----------------------------
 
     financial_report = validate_financials(state)
 
@@ -322,10 +264,9 @@ def run_ocr(docname):
     doc.financial_mismatch = financial_report.get("mismatch_amount")
     doc.is_financial_valid = financial_report.get("is_valid")
 
-
-    # ========================================================
-    # 1️⃣1️⃣ FINAL TOTALS
-    # ========================================================
+    # -----------------------------
+    # FINAL TOTALS
+    # -----------------------------
 
     doc.net_total = net_total
     doc.tax_total = tax_total
@@ -336,12 +277,11 @@ def run_ocr(docname):
         or (net_total + tax_total)
     )
 
-    # ========================================================
-    # 1️⃣2️⃣ SAVE FINAL
-    # ========================================================
+    # -----------------------------
+    # SAVE
+    # -----------------------------
 
     state["financial_validation"] = financial_report
-
     doc.semantic_invoice_json = frappe.as_json(state, indent=2)
 
     doc.confidence = confidence
@@ -360,9 +300,42 @@ def run_ocr(docname):
         "is_valid": doc.is_financial_valid
     }
 
+@frappe.whitelist()
+def create_purchase_invoice(docname):
+
+    from frappe.utils import today, getdate
+
+    doc = frappe.get_doc("Invoice OCR", docname)
 
     # ============================================================
-    # 2️⃣ CREATE PURCHASE INVOICE
+    # 1️⃣ BASIC VALIDATIONS
+    # ============================================================
+
+    if not doc.supplier:
+        frappe.throw("Please select Supplier before creating Purchase Invoice")
+
+    if not doc.invoice_number:
+        frappe.throw("Invoice Number missing")
+
+    if not doc.items:
+        frappe.throw("No items found")
+
+    company = frappe.defaults.get_user_default("Company")
+
+    if not company:
+        frappe.throw("Default Company not found")
+
+    # Prevent duplicate
+    existing = frappe.db.exists(
+        "Purchase Invoice",
+        {"bill_no": doc.invoice_number, "supplier": doc.supplier}
+    )
+
+    if existing:
+        frappe.throw(f"Purchase Invoice already exists: {existing}")
+
+    # ============================================================
+    # 2️⃣ CREATE PURCHASE INVOICE (SAFE INIT)
     # ============================================================
 
     pi = frappe.new_doc("Purchase Invoice")
@@ -370,64 +343,87 @@ def run_ocr(docname):
     pi.company = company
     pi.supplier = doc.supplier
     pi.bill_no = doc.invoice_number
-    pi.bill_date = doc.invoice_date
-    pi.posting_date = doc.invoice_date
     pi.currency = doc.currency
+
+    # -----------------------
+    # Safe Date Handling
+    # -----------------------
+
+    invoice_date = doc.invoice_date or getdate(today())
+
+    pi.bill_date = invoice_date
+
+    if invoice_date > getdate(today()):
+        pi.posting_date = getdate(today())
+    else:
+        pi.posting_date = invoice_date
+
     pi.update_stock = 0
 
     # ============================================================
-    # 3️⃣ LOAD SUPPLIER MEMORY (If Exists)
+    # 3️⃣ LOAD SUPPLIER MEMORY (INTELLIGENT)
     # ============================================================
 
+    memory = None
     profile = frappe.db.exists(
         "Supplier AI Profile",
         {"supplier": doc.supplier}
     )
 
-    memory = None
-
     if profile:
         memory = frappe.get_doc("Supplier AI Profile", profile)
 
     # ============================================================
-    # 4️⃣ ITEMS SECTION
+    # 4️⃣ INTELLIGENT EXPENSE ACCOUNT MAPPING
+    # ============================================================
+
+    default_expense_account = None
+
+    # Priority 1 → Supplier Memory
+    if memory and memory.default_expense_account:
+        default_expense_account = memory.default_expense_account
+
+    # Priority 2 → Company Default Expense Account
+    if not default_expense_account:
+        default_expense_account = frappe.db.get_value(
+            "Account",
+            {
+                "company": company,
+                "root_type": "Expense",
+                "is_group": 0
+            },
+            "name"
+        )
+
+    if not default_expense_account:
+        frappe.throw("No Expense Account found for this company")
+
+    # ============================================================
+    # 5️⃣ ITEMS SECTION (ERP SAFE)
     # ============================================================
 
     for row in doc.items:
 
-        # Priority:
-        # 1. Supplier Memory
-        # 2. First Expense Account
-        # 3. Throw error
-
-        expense_account = None
-
-        if memory and memory.default_expense_account:
-            expense_account = memory.default_expense_account
-        else:
-            expense_account = frappe.db.get_value(
-                "Account",
-                {
-                    "company": company,
-                    "root_type": "Expense",
-                    "is_group": 0
-                },
-                "name"
-            )
-
-        if not expense_account:
-            frappe.throw("No Expense Account found for this company")
+        qty = row.qty or 1
+        rate = row.rate or 0
+        amount = qty * rate
 
         pi.append("items", {
             "item_name": row.item_name,
             "description": row.item_name,
-            "qty": row.qty or 1,
-            "rate": row.rate or 0,
-            "expense_account": expense_account
+            "qty": qty,
+            "uom": "Nos",
+            "stock_uom": "Nos",
+            "conversion_factor": 1,
+            "rate": rate,
+            "amount": amount,
+            "base_rate": rate,
+            "base_amount": amount,
+            "expense_account": default_expense_account
         })
 
     # ============================================================
-    # 5️⃣ TAX SECTION (Company Safe Mapping)
+    # 6️⃣ TAX SECTION (ERP SAFE)
     # ============================================================
 
     if doc.taxes:
@@ -448,17 +444,15 @@ def run_ocr(docname):
 
             account_head = None
 
-            # Priority:
-            # 1. Valid detected tax account
-            # 2. Supplier memory tax account
-            # 3. First company tax account
-
+            # Priority 1 → Valid detected tax
             if tax.account_head in valid_tax_accounts:
                 account_head = tax.account_head
 
+            # Priority 2 → Supplier memory tax
             elif memory and memory.default_tax_account in valid_tax_accounts:
                 account_head = memory.default_tax_account
 
+            # Priority 3 → First company tax account
             elif valid_tax_accounts:
                 account_head = valid_tax_accounts[0]
 
@@ -466,34 +460,38 @@ def run_ocr(docname):
                 continue
 
             pi.append("taxes", {
-                "charge_type": tax.charge_type or "On Net Total",
+                "charge_type": tax.charge_type or "Actual",
                 "account_head": account_head,
-                "description": tax.description or account_head,
+                "description": tax.description or account_head,  # 🔥 Mandatory
                 "rate": tax.rate or 0,
                 "tax_amount": tax.tax_amount or 0
             })
 
     # ============================================================
-    # 6️⃣ INSERT & SUBMIT
+    # 7️⃣ INSERT + VALIDATE
     # ============================================================
 
     pi.insert(ignore_permissions=True)
 
-    if pi.docstatus == 0:
+    # Safe submit
+    try:
         pi.submit()
+    except Exception as e:
+        frappe.log_error(str(e), "Purchase Invoice Submission Failed")
+        frappe.throw("Purchase Invoice created but submission failed. Check logs.")
 
     # ============================================================
-    # 7️⃣ UPDATE SUPPLIER MEMORY
+    # 8️⃣ UPDATE SUPPLIER MEMORY
     # ============================================================
 
     try:
         from invoice_ocr.intelligence.supplier_memory import update_supplier_memory
         update_supplier_memory(pi)
-    except Exception as e:
-        frappe.log_error(str(e), "Supplier Memory Update Failed")
+    except Exception:
+        pass
 
     # ============================================================
-    # 8️⃣ LINK BACK
+    # 9️⃣ LINK BACK TO OCR DOC
     # ============================================================
 
     doc.purchase_invoice = pi.name
