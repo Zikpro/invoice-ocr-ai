@@ -57,7 +57,6 @@ def extract_any_date(text):
 
     return None
 
-
 # ============================================================
 # RUN OCR
 # ============================================================
@@ -327,8 +326,46 @@ def run_ocr(docname):
         "is_valid": doc.is_financial_valid
     }
 
+# ============================================================
+# CREATE PURCHASE INVOICE (FINAL PRODUCTION VERSION)
+# ============================================================
+
+@frappe.whitelist()
+def create_purchase_invoice(docname):
+
+    from frappe.utils import today, getdate
+
+    doc = frappe.get_doc("Invoice OCR", docname)
+
     # ============================================================
-    # 2️⃣ CREATE PURCHASE INVOICE (SAFE INIT)
+    # 1️⃣ BASIC VALIDATIONS
+    # ============================================================
+
+    if not doc.supplier:
+        frappe.throw("Please select Supplier before creating Purchase Invoice")
+
+    if not doc.invoice_number:
+        frappe.throw("Invoice Number missing")
+
+    if not doc.items:
+        frappe.throw("No items found")
+
+    company = frappe.defaults.get_user_default("Company")
+
+    if not company:
+        frappe.throw("Default Company not found")
+
+    # Prevent duplicate Purchase Invoice
+    existing = frappe.db.exists(
+        "Purchase Invoice",
+        {"bill_no": doc.invoice_number, "supplier": doc.supplier}
+    )
+
+    if existing:
+        frappe.throw(f"Purchase Invoice already exists: {existing}")
+
+    # ============================================================
+    # 2️⃣ CREATE PURCHASE INVOICE DOCUMENT
     # ============================================================
 
     pi = frappe.new_doc("Purchase Invoice")
@@ -336,7 +373,7 @@ def run_ocr(docname):
     pi.company = company
     pi.supplier = doc.supplier
     pi.bill_no = doc.invoice_number
-    pi.currency = doc.currency
+    pi.currency = doc.currency or frappe.defaults.get_global_default("currency")
 
     # -----------------------
     # Safe Date Handling
@@ -354,10 +391,11 @@ def run_ocr(docname):
     pi.update_stock = 0
 
     # ============================================================
-    # 3️⃣ LOAD SUPPLIER MEMORY (INTELLIGENT)
+    # 3️⃣ LOAD SUPPLIER MEMORY (OPTIONAL AI PROFILE)
     # ============================================================
 
     memory = None
+
     profile = frappe.db.exists(
         "Supplier AI Profile",
         {"supplier": doc.supplier}
@@ -367,7 +405,7 @@ def run_ocr(docname):
         memory = frappe.get_doc("Supplier AI Profile", profile)
 
     # ============================================================
-    # 4️⃣ INTELLIGENT EXPENSE ACCOUNT MAPPING
+    # 4️⃣ EXPENSE ACCOUNT RESOLUTION (INTELLIGENT)
     # ============================================================
 
     default_expense_account = None
@@ -376,7 +414,7 @@ def run_ocr(docname):
     if memory and memory.default_expense_account:
         default_expense_account = memory.default_expense_account
 
-    # Priority 2 → Company Default Expense Account
+    # Priority 2 → Company Expense Account
     if not default_expense_account:
         default_expense_account = frappe.db.get_value(
             "Account",
@@ -405,8 +443,8 @@ def run_ocr(docname):
             "item_name": row.item_name,
             "description": row.item_name,
             "qty": qty,
-            "uom": "Nos",
-            "stock_uom": "Nos",
+            "uom": row.uom or "Nos",
+            "stock_uom": row.uom or "Nos",
             "conversion_factor": 1,
             "rate": rate,
             "amount": amount,
@@ -416,7 +454,7 @@ def run_ocr(docname):
         })
 
     # ============================================================
-    # 6️⃣ TAX SECTION (ERP SAFE)
+    # 6️⃣ TAX SECTION (SAFE + VALIDATED)
     # ============================================================
 
     if doc.taxes:
@@ -437,15 +475,15 @@ def run_ocr(docname):
 
             account_head = None
 
-            # Priority 1 → Valid detected tax
+            # Priority 1 → If tax account already valid
             if tax.account_head in valid_tax_accounts:
                 account_head = tax.account_head
 
-            # Priority 2 → Supplier memory tax
+            # Priority 2 → Supplier Memory Default Tax
             elif memory and memory.default_tax_account in valid_tax_accounts:
                 account_head = memory.default_tax_account
 
-            # Priority 3 → First company tax account
+            # Priority 3 → First Company Tax Account
             elif valid_tax_accounts:
                 account_head = valid_tax_accounts[0]
 
@@ -455,26 +493,28 @@ def run_ocr(docname):
             pi.append("taxes", {
                 "charge_type": tax.charge_type or "Actual",
                 "account_head": account_head,
-                "description": tax.description or account_head,  # 🔥 Mandatory
+                "description": tax.description or account_head,
                 "rate": tax.rate or 0,
-                "tax_amount": tax.tax_amount or 0
+                "tax_amount": tax.tax_amount or 0,
+                "base_tax_amount": tax.tax_amount or 0
             })
 
     # ============================================================
-    # 7️⃣ INSERT + VALIDATE
+    # 7️⃣ INSERT + SUBMIT
     # ============================================================
 
     pi.insert(ignore_permissions=True)
 
-    # Safe submit
     try:
         pi.submit()
     except Exception as e:
         frappe.log_error(str(e), "Purchase Invoice Submission Failed")
-        frappe.throw("Purchase Invoice created but submission failed. Check logs.")
+        frappe.throw(
+            f"Purchase Invoice created but submission failed.\nError: {str(e)}"
+        )
 
     # ============================================================
-    # 8️⃣ UPDATE SUPPLIER MEMORY
+    # 8️⃣ UPDATE SUPPLIER MEMORY (OPTIONAL)
     # ============================================================
 
     try:
@@ -484,7 +524,7 @@ def run_ocr(docname):
         pass
 
     # ============================================================
-    # 9️⃣ LINK BACK TO OCR DOC
+    # 9️⃣ LINK BACK TO OCR DOCUMENT
     # ============================================================
 
     doc.purchase_invoice = pi.name
