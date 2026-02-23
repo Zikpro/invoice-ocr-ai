@@ -1,234 +1,223 @@
 {
-  "doctype": "DocType",
-  "name": "Invoice OCR",
-  "module": "Invoice Ocr",
-  "custom": 0,
-  "engine": "InnoDB",
-  "editable_grid": 1,
-  "track_changes": 1,
-  "index_web_pages_for_search": 1,
-  "sort_field": "modified",
-  "sort_order": "DESC",
-  "row_format": "Dynamic",
-  "grid_page_length": 50,
-
-  "field_order": [
-    "invoice_section",
-    "invoice_file",
-    "camera_capture",
-
-    "header_section",
-    "supplier",
-    "supplier_name",
-    "invoice_number",
-    "invoice_date",
-    "currency",
-
-    "status_section",
-    "confidence",
-    "status",
-
-    "items_section",
-    "items",
-
-    "taxes_section",
-    "taxes",
-
-    "totals_section",
-    "net_total",
-    "tax_total",
-    "grand_total",
-
-    "raw_section",
-    "raw_ocr_text",
-    "semantic_invoice_json",
-    "purchase_invoice"
-  ],
-
-  "fields": [
-    {
-      "fieldname": "invoice_section",
-      "fieldtype": "Section Break",
-      "label": "Invoice"
-    },
-    {
-      "fieldname": "invoice_file",
-      "fieldtype": "Attach",
-      "label": "Upload",
-      "description": "system: upload file with system"
-    },
-    {
-    "fieldname": "camera_capture",
-    "fieldtype": "Attach Image",
-    "label": "Capture Invoice (Camera)",
-    "description": "Mobile: opens camera directly"
-    },
-    {
-      "fieldname": "header_section",
-      "fieldtype": "Section Break",
-      "label": "Invoice Header"
-    },
-    {
-      "fieldname": "supplier",
-      "fieldtype": "Link",
-      "options": "Supplier",
-      "label": "Supplier",
-      "description": "Select manually if OCR not confident"
-    },
-    {
-      "fieldname": "supplier_name",
-      "fieldtype": "Data",
-      "label": "Detected Supplier Name",
-      "read_only": 1
-    },
-    {
-      "fieldname": "invoice_number",
-      "fieldtype": "Data",
-      "label": "Invoice Number"
-    },
-    {
-      "fieldname": "invoice_date",
-      "fieldtype": "Date",
-      "label": "Invoice Date"
-    },
-    {
-      "fieldname": "currency",
-      "fieldtype": "Link",
-      "options": "Currency",
-      "label": "Currency"
-    },
-
-    {
-      "fieldname": "status_section",
-      "fieldtype": "Section Break",
-      "label": "OCR Status"
-    },
-    {
-      "fieldname": "confidence",
-      "fieldtype": "Float",
-      "label": "OCR Confidence",
-      "read_only": 1
-    },
-    {
-      "fieldname": "status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "Draft\nReady\nPosted",
-      "default": "Draft"
-    },
-
-    {
-      "fieldname": "items_section",
-      "fieldtype": "Section Break",
-      "label": "Items"
-    },
-    {
-      "fieldname": "items",
-      "fieldtype": "Table",
-      "label": "Invoice Items",
-      "options": "Purchase Invoice Item"
-    },
-
-    {
-      "fieldname": "taxes_section",
-      "fieldtype": "Section Break",
-      "label": "Taxes"
-    },
-    {
-      "fieldname": "taxes",
-      "fieldtype": "Table",
-      "label": "Taxes",
-      "options": "Purchase Taxes and Charges"
-    },
-
-    {
-      "fieldname": "totals_section",
-      "fieldtype": "Section Break",
-      "label": "Totals"
-    },
-    {
-      "fieldname": "net_total",
-      "fieldtype": "Currency",
-      "label": "Net Total",
-      "read_only": 1
-    },
-    {
-      "fieldname": "tax_total",
-      "fieldtype": "Currency",
-      "label": "Tax Total",
-      "read_only": 1
-    },
-    {
-      "fieldname": "grand_total",
-      "fieldtype": "Currency",
-      "label": "Grand Total",
-      "read_only": 1
-    },
-    {
-      "fieldname": "financial_risk",
-      "fieldtype": "Data",
-      "label": "Financial Risk",
-      "read_only": 1
-    },
-    {
-      "fieldname": "calculated_grand_total",
-      "fieldtype": "Currency",
-      "label": "Calculated Grand Total",
-      "read_only": 1
-    },
-    {
-      "fieldname": "financial_mismatch",
-      "fieldtype": "Currency",
-      "label": "Financial Mismatch",
-      "read_only": 1
-    },
-    {
-      "fieldname": "is_financial_valid",
-      "fieldtype": "Check",
-      "label": "Is Financial Valid",
-      "read_only": 1
-    },
-    {
-      "fieldname": "raw_section",
-      "fieldtype": "Section Break",
-      "label": "OCR Raw Output"
-    },
-    {
-      "fieldname": "raw_ocr_text",
-      "fieldtype": "Long Text",
-      "label": "Raw OCR Text",
-      "read_only": 1
-    },
-    {
-      "fieldname": "semantic_invoice_json",
-      "fieldtype": "Long Text",
-      "label": "Semantic Invoice JSON",
-      "read_only": 1,
-      "description": "Normalized OCR output before ERP mapping"
-    },
-    {
-      "fieldname": "purchase_invoice",
-      "fieldtype": "Link",
-      "options": "Purchase Invoice",
-      "label": "Purchase Invoice",
-      "read_only": 1
-    }
-  ],
-
-  "permissions": [
-    {
-      "role": "System Manager",
-      "read": 1,
-      "write": 1,
-      "create": 1,
-      "delete": 1,
-      "print": 1,
-      "email": 1,
-      "export": 1,
-      "report": 1,
-      "share": 1
-    }
-  ],
-
-  "states": []
+ "actions": [],
+ "creation": "2026-02-18 17:51:03.874423",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "invoice_section",
+  "invoice_file",
+  "header_section",
+  "supplier",
+  "supplier_name",
+  "invoice_number",
+  "invoice_date",
+  "currency",
+  "status_section",
+  "confidence",
+  "status",
+  "items_section",
+  "items",
+  "taxes_section",
+  "taxes",
+  "totals_section",
+  "net_total",
+  "tax_total",
+  "grand_total",
+  "raw_section",
+  "raw_ocr_text",
+  "semantic_invoice_json",
+  "purchase_invoice",
+  "financial_risk",
+  "calculated_grand_total",
+  "financial_mismatch",
+  "is_financial_valid"
+ ],
+ "fields": [
+  {
+   "fieldname": "invoice_section",
+   "fieldtype": "Section Break",
+   "label": "Invoice"
+  },
+  {
+   "description": "system: upload file with system",
+   "fieldname": "invoice_file",
+   "fieldtype": "Attach",
+   "label": "Upload"
+  },
+  {
+   "fieldname": "header_section",
+   "fieldtype": "Section Break",
+   "label": "Invoice Header"
+  },
+  {
+   "description": "Select manually if OCR not confident",
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "Detected Supplier Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "invoice_number",
+   "fieldtype": "Data",
+   "label": "Invoice Number"
+  },
+  {
+   "fieldname": "invoice_date",
+   "fieldtype": "Date",
+   "label": "Invoice Date"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency"
+  },
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "OCR Status"
+  },
+  {
+   "fieldname": "confidence",
+   "fieldtype": "Float",
+   "label": "OCR Confidence",
+   "read_only": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nReady\nPosted"
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Invoice Items",
+   "options": "Purchase Invoice Item"
+  },
+  {
+   "fieldname": "taxes_section",
+   "fieldtype": "Section Break",
+   "label": "Taxes"
+  },
+  {
+   "fieldname": "taxes",
+   "fieldtype": "Table",
+   "label": "Taxes",
+   "options": "Purchase Taxes and Charges"
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "fieldname": "net_total",
+   "fieldtype": "Currency",
+   "label": "Net Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tax_total",
+   "fieldtype": "Currency",
+   "label": "Tax Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "label": "Grand Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "financial_risk",
+   "fieldtype": "Data",
+   "label": "Financial Risk",
+   "read_only": 1
+  },
+  {
+   "fieldname": "calculated_grand_total",
+   "fieldtype": "Currency",
+   "label": "Calculated Grand Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "financial_mismatch",
+   "fieldtype": "Currency",
+   "label": "Financial Mismatch",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_financial_valid",
+   "fieldtype": "Check",
+   "label": "Is Financial Valid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raw_section",
+   "fieldtype": "Section Break",
+   "label": "OCR Raw Output"
+  },
+  {
+   "fieldname": "raw_ocr_text",
+   "fieldtype": "Long Text",
+   "label": "Raw OCR Text",
+   "read_only": 1
+  },
+  {
+   "description": "Normalized OCR output before ERP mapping",
+   "fieldname": "semantic_invoice_json",
+   "fieldtype": "Long Text",
+   "label": "Semantic Invoice JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "purchase_invoice",
+   "fieldtype": "Link",
+   "label": "Purchase Invoice",
+   "options": "Purchase Invoice",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-02-23 11:51:17.517017",
+ "modified_by": "Administrator",
+ "module": "Invoice Ocr",
+ "name": "Invoice OCR",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

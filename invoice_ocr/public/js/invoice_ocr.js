@@ -3,7 +3,7 @@ frappe.ui.form.on("Invoice OCR", {
     refresh(frm) {
 
         // --------------------------------------------------
-        // CLEAN UI (avoid duplicate buttons)
+        // CLEAN UI
         // --------------------------------------------------
         frm.clear_custom_buttons();
         frm.page.clear_primary_action();
@@ -15,7 +15,7 @@ frappe.ui.form.on("Invoice OCR", {
 
             let color =
                 frm.doc.confidence >= 70 ? "green" :
-                frm.doc.confidence >= 40 ? "orange" : "red";
+                frm.doc.confidence >= 40 ? "orange" : "orange";
 
             frm.dashboard.set_headline(
                 `<span class="indicator ${color}">
@@ -25,16 +25,67 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
         // --------------------------------------------------
-        // CHECK FILE SOURCE (Upload OR Camera)
+        // 📸 DIRECT CAMERA BUTTON (PRO VERSION)
         // --------------------------------------------------
-        let has_file =
-            frm.doc.invoice_file ||
-            frm.doc.camera_capture;
+        frm.add_custom_button("📸 Open Camera", () => {
+
+            let input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.capture = "environment";
+
+            input.onchange = function(e) {
+
+                let file = e.target.files[0];
+                if (!file) return;
+
+                let reader = new FileReader();
+
+                reader.onload = function() {
+
+                    frappe.call({
+                        method: "frappe.client.attach_file",
+                        args: {
+                            doctype: frm.doctype,
+                            docname: frm.doc.name,
+                            filename: file.name,
+                            filedata: reader.result,
+                            is_private: 1
+                        },
+                        callback: function(r) {
+
+                            if (r.message && r.message.file_url) {
+
+                                // SET FILE FIELD
+                                frm.set_value("invoice_file", r.message.file_url);
+
+                                frm.save().then(() => {
+
+                                    frappe.show_alert({
+                                        message: "Image Captured & Linked",
+                                        indicator: "green"
+                                    });
+
+                                    frm.reload_doc();
+                                });
+                            }
+                        }
+                    });
+
+                };
+
+                reader.readAsDataURL(file);
+            };
+
+            input.click();
+
+        }).addClass("btn-primary");
+
 
         // --------------------------------------------------
-        // RUN OCR (Camera + Upload Safe)
+        // RUN OCR
         // --------------------------------------------------
-        if (has_file && frm.doc.status === "Draft") {
+        if (frm.doc.invoice_file && frm.doc.status === "Draft") {
 
             frm.add_custom_button("▶ Run OCR", () => {
 
@@ -42,21 +93,15 @@ frappe.ui.form.on("Invoice OCR", {
                     method: "invoice_ocr.api.run_ocr",
                     args: { docname: frm.doc.name },
                     freeze: true,
-                    freeze_message: __("Running OCR, please wait...")
+                    freeze_message: __("Running OCR...")
                 })
                 .then(() => {
                     frm.reload_doc();
-                })
-                .catch((err) => {
-                    frappe.msgprint({
-                        title: __("OCR Error"),
-                        message: err.message || err,
-                        indicator: "red"
-                    });
                 });
 
             }).addClass("btn-primary");
         }
+
 
         // --------------------------------------------------
         // RESET OCR
@@ -73,20 +118,15 @@ frappe.ui.form.on("Invoice OCR", {
                 })
                 .then(() => {
                     frm.reload_doc();
-                })
-                .catch((err) => {
-                    frappe.msgprint({
-                        title: __("Reset Error"),
-                        message: err.message || err,
-                        indicator: "red"
-                    });
                 });
 
             });
+
         }
 
+
         // --------------------------------------------------
-        // GENERATE PURCHASE INVOICE
+        // GENERATE PURCHASE INVOICE (AUTO SAVE FIRST)
         // --------------------------------------------------
         if (
             frm.doc.status === "Ready" &&
@@ -95,15 +135,20 @@ frappe.ui.form.on("Invoice OCR", {
             !frm.doc.purchase_invoice
         ) {
 
-            frm.add_custom_button("🧾 Generate Purchase Invoice", () => {
+            frm.add_custom_button("🧾 Generate Purchase Invoice", async () => {
 
-                frm.call({
-                    method: "invoice_ocr.api.create_purchase_invoice",
-                    args: { docname: frm.doc.name },
-                    freeze: true,
-                    freeze_message: __("Creating Purchase Invoice...")
-                })
-                .then(() => {
+                try {
+
+                    if (frm.is_dirty()) {
+                        await frm.save();
+                    }
+
+                    await frm.call({
+                        method: "invoice_ocr.api.create_purchase_invoice",
+                        args: { docname: frm.doc.name },
+                        freeze: true,
+                        freeze_message: __("Creating Purchase Invoice...")
+                    });
 
                     frappe.show_alert({
                         message: __("Purchase Invoice Created"),
@@ -111,8 +156,8 @@ frappe.ui.form.on("Invoice OCR", {
                     });
 
                     frm.reload_doc();
-                })
-                .catch((err) => {
+
+                } catch (err) {
 
                     frappe.msgprint({
                         title: __("Purchase Invoice Error"),
@@ -120,10 +165,11 @@ frappe.ui.form.on("Invoice OCR", {
                         indicator: "red"
                     });
 
-                });
+                }
 
             }).addClass("btn-success");
         }
+
 
         // --------------------------------------------------
         // VIEW PURCHASE INVOICE
@@ -139,7 +185,31 @@ frappe.ui.form.on("Invoice OCR", {
                 );
 
             });
+
         }
-    }
+    },
+
+
+    // --------------------------------------------------
+    // AUTO SAVE ON FIELD CHANGE
+    // --------------------------------------------------
+
+    supplier(frm) { auto_save(frm); },
+    invoice_date(frm) { auto_save(frm); },
+    currency(frm) { auto_save(frm); },
+    invoice_number(frm) { auto_save(frm); }
 
 });
+
+
+// --------------------------------------------------
+// GLOBAL AUTO SAVE FUNCTION
+// --------------------------------------------------
+
+function auto_save(frm) {
+    if (frm.is_dirty()) {
+        frm.save().catch((err) => {
+            console.error("Auto save failed", err);
+        });
+    }
+}
