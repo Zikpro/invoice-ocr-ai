@@ -6,67 +6,83 @@ frappe.ui.form.on("Invoice OCR", {
         frm.page.clear_primary_action();
 
         // ==================================================
-        // 📸 OPEN CAMERA BUTTON
+        // 📸 OPEN CAMERA BUTTON (FULL SAFE VERSION)
         // ==================================================
 
-        frm.add_custom_button("📸 Open Camera", () => {
+        frm.add_custom_button("📸 Open Camera", async () => {
 
-            let input = document.createElement("input");
-            input.type = "file";
-            input.accept = "image/*";
-            input.capture = "environment";
+            try {
 
-            input.onchange = function(e) {
+                // ✅ If document is new → save first
+                if (frm.is_new()) {
+                    await frm.save();
+                }
 
-                let file = e.target.files[0];
-                if (!file) return;
+                let input = document.createElement("input");
+                input.type = "file";
+                input.accept = "image/*";
+                input.capture = "environment";
 
-                let reader = new FileReader();
+                input.onchange = function(e) {
 
-                reader.onload = async function() {
+                    let file = e.target.files[0];
+                    if (!file) return;
 
-                    try {
+                    let reader = new FileReader();
 
-                        // ✅ remove metadata header
-                        let base64 = reader.result.split(",")[1];
+                    reader.onload = async function() {
 
-                        let r = await frappe.call({
-                            method: "frappe.client.attach_file",
-                            args: {
-                                doctype: frm.doctype,
-                                docname: frm.doc.name,
-                                filename: file.name,
-                                filedata: base64,
-                                is_private: 1
-                            },
-                            freeze: true,
-                            freeze_message: __("Uploading image...")
-                        });
+                        try {
 
-                        frm.set_value("camera_capture", r.message.file_url);
+                            // ✅ Remove base64 header
+                            let base64 = reader.result.split(",")[1];
 
-                        await frm.save();
+                            let r = await frappe.call({
+                                method: "frappe.client.attach_file",
+                                args: {
+                                    doctype: frm.doctype,
+                                    docname: frm.doc.name,
+                                    filename: file.name,
+                                    filedata: base64,
+                                    is_private: 1
+                                },
+                                freeze: true,
+                                freeze_message: __("Uploading image...")
+                            });
 
-                        frappe.show_alert({
-                            message: "Image Uploaded Successfully",
-                            indicator: "green"
-                        });
+                            // ✅ Link file to field
+                            frm.set_value("camera_capture", r.message.file_url);
 
-                        frm.reload_doc();
+                            await frm.save();
 
-                    } catch (err) {
-                        frappe.msgprint({
-                            title: "Upload Error",
-                            message: err.message || err,
-                            indicator: "red"
-                        });
-                    }
+                            frappe.show_alert({
+                                message: "Image Uploaded Successfully",
+                                indicator: "green"
+                            });
+
+                            frm.reload_doc();
+
+                        } catch (err) {
+                            frappe.msgprint({
+                                title: "Upload Error",
+                                message: err.message || err,
+                                indicator: "red"
+                            });
+                        }
+                    };
+
+                    reader.readAsDataURL(file);
                 };
 
-                reader.readAsDataURL(file);
-            };
+                input.click();
 
-            input.click();
+            } catch (err) {
+                frappe.msgprint({
+                    title: "Error",
+                    message: err.message || err,
+                    indicator: "red"
+                });
+            }
 
         }).addClass("btn-primary");
 
@@ -93,7 +109,7 @@ frappe.ui.form.on("Invoice OCR", {
 
 
         // ==================================================
-        // 🧾 GENERATE PURCHASE INVOICE
+        // 🧾 GENERATE PURCHASE INVOICE (AUTO SAVE FIRST)
         // ==================================================
 
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
