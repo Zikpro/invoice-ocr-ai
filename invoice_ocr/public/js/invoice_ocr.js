@@ -6,14 +6,14 @@ frappe.ui.form.on("Invoice OCR", {
         frm.page.clear_primary_action();
 
         // ==================================================
-        // 📸 OPEN CAMERA (FRAPPE v15 SAFE VERSION)
+        // 📸 CAMERA CAPTURE BUTTON
         // ==================================================
 
-        frm.add_custom_button("📸 Open Camera", async () => {
+        frm.add_custom_button("📸 Capture Invoice", async () => {
 
             try {
 
-                // ✅ Save document first if new
+                // If document is new, save first
                 if (frm.is_new()) {
                     await frm.save();
                 }
@@ -34,10 +34,10 @@ frappe.ui.form.on("Invoice OCR", {
 
                         try {
 
-                            // ✅ Send full data URL (important for v15)
-                            let base64 = reader.result;
+                            // 🔥 IMPORTANT: send pure base64 only
+                            let base64 = reader.result.split(",")[1];
 
-                            let r = await frappe.call({
+                            let response = await frappe.call({
                                 method: "frappe.client.attach_file",
                                 args: {
                                     doctype: frm.doctype,
@@ -50,13 +50,13 @@ frappe.ui.form.on("Invoice OCR", {
                                 freeze_message: __("Uploading image...")
                             });
 
-                            // Link file to field
-                            frm.set_value("camera_capture", r.message.file_url);
+                            // Set file in camera_capture field
+                            frm.set_value("camera_capture", response.message.file_url);
 
                             await frm.save();
 
                             frappe.show_alert({
-                                message: "Image Uploaded Successfully",
+                                message: "Invoice image uploaded successfully",
                                 indicator: "green"
                             });
 
@@ -64,7 +64,7 @@ frappe.ui.form.on("Invoice OCR", {
 
                         } catch (err) {
                             frappe.msgprint({
-                                title: "Upload Error",
+                                title: "Upload Failed",
                                 message: err.message || err,
                                 indicator: "red"
                             });
@@ -93,23 +93,23 @@ frappe.ui.form.on("Invoice OCR", {
 
         if ((frm.doc.invoice_file || frm.doc.camera_capture) && frm.doc.status === "Draft") {
 
-            frm.add_custom_button("▶ Run OCR", () => {
+            frm.add_custom_button("▶ Run OCR", async () => {
 
-                frm.call({
+                await frm.call({
                     method: "invoice_ocr.api.run_ocr",
                     args: { docname: frm.doc.name },
                     freeze: true,
                     freeze_message: __("Running OCR...")
-                }).then(() => {
-                    frm.reload_doc();
                 });
+
+                frm.reload_doc();
 
             }).addClass("btn-primary");
         }
 
 
         // ==================================================
-        // 🧾 GENERATE PURCHASE INVOICE
+        // 🧾 CREATE PURCHASE INVOICE
         // ==================================================
 
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
@@ -130,7 +130,7 @@ frappe.ui.form.on("Invoice OCR", {
                     });
 
                     frappe.show_alert({
-                        message: "Purchase Invoice Created",
+                        message: "Purchase Invoice Created Successfully",
                         indicator: "green"
                     });
 
