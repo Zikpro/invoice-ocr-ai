@@ -1,10 +1,45 @@
 import re
 import os
+import base64   # ✅ ADD THIS
 import frappe
 from frappe.utils import getdate
 from invoice_ocr.vision.ocr_engine import run_vision_ocr
 
 
+# ============================================================
+# CAMERA / FILE UPLOAD (FRAPPE 15 SAFE)
+# ============================================================
+
+@frappe.whitelist()
+def upload_camera_image(docname, filedata, filename):
+
+    if not docname:
+        frappe.throw("Document name missing")
+
+    if not filedata:
+        frappe.throw("No file data received")
+
+    if "," not in filedata:
+        frappe.throw("Invalid file format")
+
+    try:
+        header, encoded = filedata.split(",", 1)
+        file_bytes = base64.b64decode(encoded)
+    except Exception:
+        frappe.throw("Invalid base64 image data")
+
+    file_doc = frappe.get_doc({
+        "doctype": "File",
+        "file_name": filename or "invoice_image.jpg",
+        "attached_to_doctype": "Invoice OCR",
+        "attached_to_name": docname,
+        "is_private": 1,
+        "content": file_bytes
+    })
+
+    file_doc.save(ignore_permissions=True)
+
+    return file_doc.file_url
 # ============================================================
 # UTILITIES
 # ============================================================
@@ -80,7 +115,7 @@ def run_ocr(docname):
     # FILE FETCH (SAFE VERSION)
     # ========================================================
 
-    file_url = doc.invoice_file or doc.camera_capture
+    file_url = doc.invoice_file
 
     if not file_url:
         frappe.throw("Please upload or capture invoice before running OCR")

@@ -6,92 +6,57 @@ frappe.ui.form.on("Invoice OCR", {
         frm.page.clear_primary_action();
 
         // ==================================================
-        // 📸 CAMERA CAPTURE BUTTON
+        // 📸 BUTTON 1: DIRECT CAMERA CAPTURE
         // ==================================================
 
         frm.add_custom_button("📸 Capture Invoice", async () => {
 
-            try {
-
-                // If document is new, save first
-                if (frm.is_new()) {
-                    await frm.save();
-                }
-
-                let input = document.createElement("input");
-                input.type = "file";
-                input.accept = "image/*";
-                input.capture = "environment";
-
-                input.onchange = function (e) {
-
-                    let file = e.target.files[0];
-                    if (!file) return;
-
-                    let reader = new FileReader();
-
-                    reader.onload = async function () {
-
-                        try {
-
-                            // 🔥 IMPORTANT: send pure base64 only
-                            let base64 = reader.result.split(",")[1];
-
-                            let response = await frappe.call({
-                                method: "frappe.client.attach_file",
-                                args: {
-                                    doctype: frm.doctype,
-                                    docname: frm.doc.name,
-                                    filename: file.name,
-                                    filedata: base64,
-                                    is_private: 1
-                                },
-                                freeze: true,
-                                freeze_message: __("Uploading image...")
-                            });
-
-                            // Set file in camera_capture field
-                            frm.set_value("camera_capture", response.message.file_url);
-
-                            await frm.save();
-
-                            frappe.show_alert({
-                                message: "Invoice image uploaded successfully",
-                                indicator: "green"
-                            });
-
-                            frm.reload_doc();
-
-                        } catch (err) {
-                            frappe.msgprint({
-                                title: "Upload Failed",
-                                message: err.message || err,
-                                indicator: "red"
-                            });
-                        }
-                    };
-
-                    reader.readAsDataURL(file);
-                };
-
-                input.click();
-
-            } catch (err) {
-                frappe.msgprint({
-                    title: "Error",
-                    message: err.message || err,
-                    indicator: "red"
-                });
+            if (frm.is_new()) {
+                await frm.save();
             }
 
+            let input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.capture = "environment";   // Forces camera on mobile
+
+            input.onchange = function (e) {
+                handle_upload(frm, e.target.files[0]);
+            };
+
+            input.click();
+
         }).addClass("btn-primary");
+
+
+        // ==================================================
+        // 📂 BUTTON 2: SYSTEM FILE UPLOAD
+        // ==================================================
+
+        frm.add_custom_button("📂 Upload Invoice File", async () => {
+
+            if (frm.is_new()) {
+                await frm.save();
+            }
+
+            let input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*,.pdf";  // allow PDF also
+
+            input.onchange = function (e) {
+                handle_upload(frm, e.target.files[0]);
+            };
+
+            input.click();
+
+        });
 
 
         // ==================================================
         // ▶ RUN OCR
         // ==================================================
 
-        if ((frm.doc.invoice_file || frm.doc.camera_capture) && frm.doc.status === "Draft") {
+        if (frm.doc.invoice_file && frm.doc.status === "Draft") {
 
             frm.add_custom_button("▶ Run OCR", async () => {
 
@@ -103,61 +68,62 @@ frappe.ui.form.on("Invoice OCR", {
                 });
 
                 frm.reload_doc();
-
             }).addClass("btn-primary");
-        }
-
-
-        // ==================================================
-        // 🧾 CREATE PURCHASE INVOICE
-        // ==================================================
-
-        if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
-
-            frm.add_custom_button("🧾 Generate Purchase Invoice", async () => {
-
-                try {
-
-                    if (frm.is_dirty()) {
-                        await frm.save();
-                    }
-
-                    await frm.call({
-                        method: "invoice_ocr.api.create_purchase_invoice",
-                        args: { docname: frm.doc.name },
-                        freeze: true,
-                        freeze_message: __("Creating Purchase Invoice...")
-                    });
-
-                    frappe.show_alert({
-                        message: "Purchase Invoice Created Successfully",
-                        indicator: "green"
-                    });
-
-                    frm.reload_doc();
-
-                } catch (err) {
-                    frappe.msgprint({
-                        title: "Purchase Invoice Error",
-                        message: err.message || err,
-                        indicator: "red"
-                    });
-                }
-
-            }).addClass("btn-success");
-        }
-
-
-        // ==================================================
-        // 📄 VIEW PURCHASE INVOICE
-        // ==================================================
-
-        if (frm.doc.purchase_invoice) {
-
-            frm.add_custom_button("📄 View Purchase Invoice", () => {
-                frappe.set_route("Form", "Purchase Invoice", frm.doc.purchase_invoice);
-            });
         }
 
     }
 });
+
+
+// ==================================================
+// COMMON UPLOAD FUNCTION
+// ==================================================
+
+async function handle_upload(frm, file) {
+
+    if (!file) return;
+
+    let reader = new FileReader();
+
+    reader.onload = async function () {
+
+        try {
+
+            let base64 = reader.result;
+
+            let response = await frappe.call({
+                method: "invoice_ocr.api.upload_camera_image",
+                args: {
+                    docname: frm.doc.name,
+                    filedata: base64,
+                    filename: file.name
+                },
+                freeze: true,
+                freeze_message: __("Uploading file...")
+            });
+
+            if (response.message) {
+
+                frm.set_value("invoice_file", response.message);
+                await frm.save();
+
+                frappe.show_alert({
+                    message: "Invoice uploaded successfully",
+                    indicator: "green"
+                });
+
+                frm.reload_doc();
+            }
+
+        } catch (err) {
+
+            frappe.msgprint({
+                title: "Upload Failed",
+                message: err.message || err,
+                indicator: "red"
+            });
+        }
+    };
+
+    reader.readAsDataURL(file);
+}
