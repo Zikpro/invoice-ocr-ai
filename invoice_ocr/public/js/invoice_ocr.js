@@ -2,10 +2,12 @@ frappe.ui.form.on("Invoice OCR", {
 
     refresh(frm) {
 
+        // Remove Save button completely
+        frm.disable_save();
         frm.page.clear_primary_action();
 
         // ==================================================
-        // 📸 CAMERA BUTTON (ONLY CAMERA)
+        // 📸 CAMERA BUTTON
         // ==================================================
 
         frm.add_custom_button("📸 Capture Invoice", async () => {
@@ -17,10 +19,10 @@ frappe.ui.form.on("Invoice OCR", {
             let input = document.createElement("input");
             input.type = "file";
             input.accept = "image/*";
-            input.capture = "environment"; // force camera
+            input.capture = "environment";
 
             input.onchange = function (e) {
-                handle_camera_upload(frm, e.target.files[0]);
+                handle_upload(frm, e.target.files[0]);
             };
 
             input.click();
@@ -29,28 +31,7 @@ frappe.ui.form.on("Invoice OCR", {
 
 
         // ==================================================
-        // ▶ RUN OCR BUTTON
-        // ==================================================
-
-        if (frm.doc.invoice_file && frm.doc.status === "Draft") {
-
-            frm.add_custom_button("▶ Run OCR", async () => {
-
-                await frm.call({
-                    method: "invoice_ocr.api.run_ocr",
-                    args: { docname: frm.doc.name },
-                    freeze: true,
-                    freeze_message: __("Running OCR...")
-                });
-
-                frm.reload_doc();
-
-            }).addClass("btn-primary");
-        }
-
-
-        // ==================================================
-        // 🧾 CREATE PURCHASE INVOICE BUTTON
+        // 🧾 PURCHASE INVOICE BUTTON (ONLY WHEN READY)
         // ==================================================
 
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
@@ -73,24 +54,35 @@ frappe.ui.form.on("Invoice OCR", {
 
 
     // ==================================================
-    // AUTO SAVE WHEN FILE ATTACHED OR CHANGED
+    // 🔥 AUTO SAVE + AUTO OCR WHEN FILE ATTACHED
     // ==================================================
 
-    invoice_file(frm) {
+    async invoice_file(frm) {
 
-        if (frm.doc.invoice_file && frm.is_dirty()) {
-            frm.save();
-        }
+        if (!frm.doc.invoice_file) return;
+
+        // Auto Save
+        await frm.save();
+
+        // Auto Run OCR
+        await frm.call({
+            method: "invoice_ocr.api.run_ocr",
+            args: { docname: frm.doc.name },
+            freeze: true,
+            freeze_message: __("Processing Invoice Automatically...")
+        });
+
+        frm.reload_doc();
     }
 
 });
 
 
 // ==================================================
-// CAMERA UPLOAD FUNCTION (CUSTOM SAFE)
+// CAMERA UPLOAD FUNCTION
 // ==================================================
 
-async function handle_camera_upload(frm, file) {
+async function handle_upload(frm, file) {
 
     if (!file) return;
 
@@ -114,16 +106,7 @@ async function handle_camera_upload(frm, file) {
             });
 
             if (response.message) {
-
                 frm.set_value("invoice_file", response.message);
-                await frm.save();
-
-                frappe.show_alert({
-                    message: "Invoice uploaded successfully",
-                    indicator: "green"
-                });
-
-                frm.reload_doc();
             }
 
         } catch (err) {
