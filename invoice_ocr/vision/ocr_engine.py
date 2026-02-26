@@ -11,11 +11,13 @@ VISION_MODEL = "deepseek-ai/DeepSeek-OCR"
 TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
+
 # ============================================================
-# FILE ENCODING (IMAGE ONLY)
+# FILE ENCODING (SAFE)
 # ============================================================
 
 def _encode_file_to_base64(file_path):
+
     if not os.path.exists(file_path):
         frappe.throw(_("File not found"))
 
@@ -29,87 +31,144 @@ def _detect_mime_type(file_path):
 
 
 # ============================================================
-# PDF TEXT EXTRACTION (Cloud Safe)
+# PDF TEXT EXTRACTION (SAFE)
 # ============================================================
 
 def extract_pdf_text(file_path):
-    reader = PdfReader(file_path)
-    text = ""
 
-    for page in reader.pages:
-        extracted = page.extract_text()
-        if extracted:
-            text += extracted + "\n"
+    try:
+        reader = PdfReader(file_path)
+        text = ""
 
-    return text.strip()
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
+
+        return text.strip()
+
+    except Exception as e:
+        frappe.log_error(str(e), "PDF Extraction Failed")
+        return ""
 
 
 # ============================================================
-# IMAGE OCR (VISION MODEL)
+# IMAGE OCR (VISION MODEL SAFE)
 # ============================================================
 
 def run_image_ocr(file_path):
 
     api_key = frappe.conf.get("deepinfra_api_key")
+
     if not api_key:
-        frappe.throw(_("DeepInfra API key not configured"))
+        frappe.log_error("DeepInfra API key missing", "OCR Config Error")
+        return ""
 
-    base64_file = _encode_file_to_base64(file_path)
-    mime_type = _detect_mime_type(file_path)
+    try:
 
-    payload = {
-        "model": VISION_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{base64_file}"
+        base64_file = _encode_file_to_base64(file_path)
+        mime_type = _detect_mime_type(file_path)
+
+        payload = {
+            "model": VISION_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_file}"
+                            }
                         }
-                    }
-                ]
-            }
-        ],
-        "temperature": 0
-    }
+                    ]
+                }
+            ],
+            "temperature": 0
+        }
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
 
-    response = requests.post(
-        DEEPINFRA_API_URL,
-        json=payload,
-        headers=headers,
-        timeout=120
-    )
+        response = requests.post(
+            DEEPINFRA_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=120
+        )
 
-    response.raise_for_status()
+        if response.status_code != 200:
+            frappe.log_error(
+                response.text,
+                "DeepInfra API Error"
+            )
+            return ""
 
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
+        data = response.json()
 
-    if isinstance(content, list):
-        return " ".join(c.get("text", "") for c in content)
+        if "choices" not in data:
+            frappe.log_error(str(data), "DeepInfra Invalid Response")
+            return ""
 
-    return content.strip()
+        content = data["choices"][0]["message"]["content"]
+
+        if isinstance(content, list):
+            return " ".join(c.get("text", "") for c in content)
+
+        return content.strip()
+
+    except requests.exceptions.Timeout:
+        frappe.log_error("DeepInfra Timeout", "OCR Timeout")
+        return ""
+
+    except Exception as e:
+        frappe.log_error(str(e), "OCR Vision Error")
+        return ""
 
 
 # ============================================================
-# UNIVERSAL OCR ENTRY POINT
+# UNIVERSAL OCR ENTRY POINT (FINAL SAFE VERSION)
 # ============================================================
 
 def run_vision_ocr(file_path):
     """
     Smart handler:
-    - If PDF → extract text
-    - If Image → Vision OCR
+    - PDF → extract text
+    - Image → Vision OCR
+    - Safe for background jobs
     """
 
-    if file_path.lower().endswith(".pdf"):
-        return extract_pdf_text(file_path)
+    try:
 
-    return run_image_ocr(file_path)
+        if not os.path.exists(file_path):
+            return ""
+
+        file_size = os.path.getsize(file_path)
+
+        # 🔒 Image limit (5MB)
+        if not file_path.lower().endswith(".pdf"):
+            if file_size > 5 * 1024 * 1024:
+                frappe.log_error(
+                    f"Image too large: {file_size}",
+                    "OCR Size Limit"
+                )
+                return ""
+
+        # 🔒 PDF limit (10MB)
+        if file_path.lower().endswith(".pdf"):
+            if file_size > 10 * 1024 * 1024:
+                frappe.log_error(
+                    f"PDF too large: {file_size}",
+                    "OCR Size Limit"
+                )
+                return ""
+
+            return extract_pdf_text(file_path)
+
+        return run_image_ocr(file_path)
+
+    except Exception as e:
+        frappe.log_error(str(e), "OCR Engine Fatal Error")
+        return ""

@@ -95,7 +95,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "Draft\nReady\nPosted"
+   "options": "Draft\nReady\nPosted\nProcessing"
   },
   {
    "fieldname": "items_section",

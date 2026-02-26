@@ -1,13 +1,13 @@
 import re
 import os
-import base64   # ✅ ADD THIS
+import base64
 import frappe
 from frappe.utils import getdate
 from invoice_ocr.vision.ocr_engine import run_vision_ocr
 
 
 # ============================================================
-# CAMERA / FILE UPLOAD (FRAPPE 15 SAFE)
+# CAMERA / FILE UPLOAD (SAFE + CLOUD READY)
 # ============================================================
 
 @frappe.whitelist()
@@ -28,6 +28,10 @@ def upload_camera_image(docname, filedata, filename):
     except Exception:
         frappe.throw("Invalid base64 image data")
 
+    # 🔒 Max 5MB protection
+    if len(file_bytes) > 5 * 1024 * 1024:
+        frappe.throw("Captured image too large. Max 5MB allowed.")
+
     file_doc = frappe.get_doc({
         "doctype": "File",
         "file_name": filename or "invoice_image.jpg",
@@ -40,6 +44,8 @@ def upload_camera_image(docname, filedata, filename):
     file_doc.save(ignore_permissions=True)
 
     return file_doc.file_url
+
+
 # ============================================================
 # UTILITIES
 # ============================================================
@@ -59,23 +65,20 @@ def detect_currency(text):
 
 def extract_grand_total(text):
 
-        match = re.search(
-            r"(grand total|total due|total including).*?([\d,]+\.\d{2})",
-            text,
-            re.IGNORECASE
-        )
+    match = re.search(
+        r"(grand total|total due|total including).*?([\d,]+\.\d{2})",
+        text,
+        re.IGNORECASE
+    )
 
-        if match:
-            return float(match.group(2).replace(",", ""))
+    if match:
+        return float(match.group(2).replace(",", ""))
 
-        # fallback → last number
-        amounts = re.findall(r"[\d,]+\.\d{2}", text)
+    amounts = re.findall(r"[\d,]+\.\d{2}", text)
+    if amounts:
+        return float(amounts[-1].replace(",", ""))
 
-        if amounts:
-            return float(amounts[-1].replace(",", ""))
-
-        return None
-
+    return None
 
 
 def extract_any_date(text):
@@ -91,17 +94,40 @@ def extract_any_date(text):
             return match.group(0)
 
     return None
+#=========================================================
+@frappe.whitelist()
+def enqueue_ocr(docname):
+
+    doc = frappe.get_doc("Invoice OCR", docname)
+
+    if not doc.invoice_file:
+        frappe.throw("Please upload invoice first")
+
+    if doc.status == "Processing":
+        return {"status": "Already Processing"}
+
+    doc.status = "Processing"
+    doc.save(ignore_permissions=True, ignore_version=True)
+
+    frappe.enqueue(
+        method="invoice_ocr.api.run_ocr",
+        queue="long",
+        timeout=600,
+        docname=docname
+    )
+
+    return {"status": "Queued"}
 
 # ============================================================
-# RUN OCR
+# RUN OCR (FULL PRODUCTION VERSION)
 # ============================================================
+
 @frappe.whitelist()
 def run_ocr(docname):
 
     from invoice_ocr.intelligence.supplier_matcher import intelligent_supplier_match
     from invoice_ocr.intelligence.line_classifier import classify_lines
     from invoice_ocr.intelligence.financial_validator import validate_financials
-
     from invoice_ocr.ai.agents.layout_agent import detect_layout
     from invoice_ocr.ai.agents.context_builder import build_context
     from invoice_ocr.ai.agents.header_agent import extract_header_agent
@@ -112,31 +138,39 @@ def run_ocr(docname):
     doc = frappe.get_doc("Invoice OCR", docname)
 
     # ========================================================
-    # FILE FETCH (SAFE VERSION)
+    # FILE FETCH
     # ========================================================
 
     file_url = doc.invoice_file
 
     if not file_url:
-        frappe.throw("Please upload or capture invoice before running OCR")
+        frappe.throw("Please upload invoice before running OCR")
 
-    # Fetch File document safely
     file_doc = frappe.get_all(
         "File",
         filters={"file_url": file_url},
-        fields=["name", "file_url"]
+        fields=["name"]
     )
 
     if not file_doc:
-        frappe.throw(f"File not found in File doctype: {file_url}")
+        frappe.throw("File not found in File doctype")
 
     file_doc = frappe.get_doc("File", file_doc[0].name)
-
     file_path = file_doc.get_full_path()
 
     if not os.path.exists(file_path):
-        frappe.throw(f"Invoice file not found on server path: {file_path}")
-    
+        frappe.throw("Invoice file not found on server")
+
+    # 🔒 FILE SIZE SAFETY
+    file_size = os.path.getsize(file_path)
+
+    if not file_path.lower().endswith(".pdf"):
+        if file_size > 5 * 1024 * 1024:
+            frappe.throw("Image too large. Max 5MB allowed.")
+
+    if file_path.lower().endswith(".pdf"):
+        if file_size > 10 * 1024 * 1024:
+            frappe.throw("PDF too large. Max 10MB allowed.")
 
     # ========================================================
     # OCR
@@ -146,12 +180,12 @@ def run_ocr(docname):
         raw = run_vision_ocr(file_path)
     except Exception as e:
         frappe.log_error(str(e), "OCR Processing Failed")
-        frappe.throw("OCR processing failed. Please check error logs.")
+        frappe.throw("OCR processing failed. Check logs.")
 
     doc.raw_ocr_text = raw
 
     # ========================================================
-    # INITIAL STATE
+    # AI PIPELINE
     # ========================================================
 
     state = {
@@ -161,10 +195,6 @@ def run_ocr(docname):
         "taxes": [],
         "confidence": 60
     }
-
-    # ========================================================
-    # MULTI AGENT PIPELINE
-    # ========================================================
 
     state = detect_layout(state)
     state = build_context(state)
@@ -177,7 +207,7 @@ def run_ocr(docname):
     state["detected_grand_total"] = detected_grand_total
 
     # ========================================================
-    # BUILD ITEMS (ONLY VALID ITEMS)
+    # BUILD ITEMS
     # ========================================================
 
     doc.set("items", [])
@@ -218,7 +248,7 @@ def run_ocr(docname):
     state["net_total"] = net_total
 
     # ========================================================
-    # CLEAN TAX VALIDATION
+    # TAX LOGIC
     # ========================================================
 
     clean_taxes = []
@@ -231,11 +261,9 @@ def run_ocr(docname):
         if amount <= 0:
             continue
 
-        # ❌ Ignore tax equal to subtotal
         if amount == net_total:
             continue
 
-        # ❌ Ignore unrealistic tax (>40%)
         if net_total and amount > (net_total * 0.4):
             continue
 
@@ -244,10 +272,6 @@ def run_ocr(docname):
 
     state["taxes"] = clean_taxes
     state["tax_total"] = tax_total
-
-    # ========================================================
-    # SMART TAX FALLBACK
-    # ========================================================
 
     if detected_grand_total and net_total:
         difference = round(detected_grand_total - net_total, 2)
@@ -269,7 +293,7 @@ def run_ocr(docname):
             tax_total = difference
 
     # ========================================================
-    # BUILD TAX TABLE IN ERP
+    # BUILD TAX TABLE
     # ========================================================
 
     doc.set("taxes", [])
@@ -327,7 +351,7 @@ def run_ocr(docname):
     )
 
     # ========================================================
-    # SUPPLIER MATCHING
+    # HEADER MAPPING
     # ========================================================
 
     header = state.get("header") or {}
@@ -361,7 +385,7 @@ def run_ocr(docname):
     doc.status = "Ready"
 
     doc.flags.ignore_mandatory = True
-    doc.save(ignore_permissions=True)
+    doc.save(ignore_permissions=True, ignore_version=True)
     frappe.db.commit()
 
     return {
@@ -374,7 +398,7 @@ def run_ocr(docname):
     }
 
 # ============================================================
-# CREATE PURCHASE INVOICE (FINAL PRODUCTION VERSION)
+# CREATE PURCHASE INVOICE (FULL PRODUCTION SAFE VERSION)
 # ============================================================
 
 @frappe.whitelist()
@@ -477,7 +501,7 @@ def create_purchase_invoice(docname):
         frappe.throw("No Expense Account found for this company")
 
     # ============================================================
-    # 5️⃣ ITEMS SECTION (ERP SAFE)
+    # 5️⃣ ITEMS SECTION
     # ============================================================
 
     for row in doc.items:
@@ -501,7 +525,7 @@ def create_purchase_invoice(docname):
         })
 
     # ============================================================
-    # 6️⃣ TAX SECTION (SAFE + VALIDATED)
+    # 6️⃣ TAX SECTION (COPY FROM OCR DOC)
     # ============================================================
 
     if doc.taxes:
@@ -522,15 +546,15 @@ def create_purchase_invoice(docname):
 
             account_head = None
 
-            # Priority 1 → If tax account already valid
+            # Priority 1 → If already valid
             if tax.account_head in valid_tax_accounts:
                 account_head = tax.account_head
 
-            # Priority 2 → Supplier Memory Default Tax
+            # Priority 2 → Supplier memory default
             elif memory and memory.default_tax_account in valid_tax_accounts:
                 account_head = memory.default_tax_account
 
-            # Priority 3 → First Company Tax Account
+            # Priority 3 → First company tax account
             elif valid_tax_accounts:
                 account_head = valid_tax_accounts[0]
 
@@ -576,7 +600,7 @@ def create_purchase_invoice(docname):
 
     doc.purchase_invoice = pi.name
     doc.status = "Posted"
-    doc.save(ignore_permissions=True)
+    doc.save(ignore_permissions=True, ignore_version=True)
 
     frappe.db.commit()
 
