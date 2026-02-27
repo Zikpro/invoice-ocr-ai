@@ -1,17 +1,14 @@
 frappe.ui.form.on("Invoice OCR", {
 
-    refresh(frm) {
+    async refresh(frm) {
 
-        // --------------------------------------------------
-        // Disable manual save button
-        // --------------------------------------------------
         frm.disable_save();
         frm.page.clear_primary_action();
         frm.clear_custom_buttons();
 
-        // --------------------------------------------------
-        // 📸 CAMERA BUTTON (MOBILE SAFE)
-        // --------------------------------------------------
+        // =================================================
+        // 📸 CAMERA CAPTURE BUTTON (MOBILE SAFE)
+        // =================================================
         frm.add_custom_button("📸 Capture Invoice", async () => {
 
             if (frm.is_new()) {
@@ -21,7 +18,7 @@ frappe.ui.form.on("Invoice OCR", {
             let input = document.createElement("input");
             input.type = "file";
             input.accept = "image/*";
-            input.capture = "environment"; // rear camera
+            input.capture = "environment";
 
             input.onchange = function (e) {
                 handle_upload(frm, e.target.files[0]);
@@ -32,10 +29,10 @@ frappe.ui.form.on("Invoice OCR", {
         }).addClass("btn-primary");
 
 
-        // --------------------------------------------------
-        // 🖥 System Upload Trigger (Laptop / Manual Upload)
-        // --------------------------------------------------
-        if (frm.doc.invoice_file && frm.doc.status === "Draft") {
+        // =================================================
+        // ▶ RUN OCR BUTTON (SAFE LOGIC)
+        // =================================================
+        if (frm.doc.invoice_file && frm.doc.status !== "Processing") {
 
             frm.add_custom_button("▶ Run OCR", async () => {
 
@@ -57,9 +54,9 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
 
-        // --------------------------------------------------
-        // ⏳ PROCESSING INDICATOR
-        // --------------------------------------------------
+        // =================================================
+        // ⏳ PROCESSING STATE
+        // =================================================
         if (frm.doc.status === "Processing") {
 
             frm.dashboard.set_headline(
@@ -70,9 +67,9 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
 
-        // --------------------------------------------------
+        // =================================================
         // 🧾 CREATE PURCHASE INVOICE
-        // --------------------------------------------------
+        // =================================================
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
 
             frm.add_custom_button("🧾 Create Purchase Invoice", async () => {
@@ -90,9 +87,9 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
 
-        // --------------------------------------------------
+        // =================================================
         // 📄 VIEW PURCHASE INVOICE
-        // --------------------------------------------------
+        // =================================================
         if (frm.doc.purchase_invoice) {
 
             frm.add_custom_button("📄 View Purchase Invoice", () => {
@@ -106,9 +103,9 @@ frappe.ui.form.on("Invoice OCR", {
     },
 
 
-    // --------------------------------------------------
-    // 🔥 AUTO QUEUE WHEN SYSTEM FILE UPLOADED
-    // --------------------------------------------------
+    // =================================================
+    // 🔥 AUTO QUEUE WHEN FILE UPLOADED MANUALLY
+    // =================================================
     async invoice_file(frm) {
 
         if (!frm.doc.invoice_file) return;
@@ -192,13 +189,13 @@ async function handle_upload(frm, file) {
         if (result.message && result.message.file_url) {
 
             await frm.set_value("invoice_file", result.message.file_url);
+            await frm.save(); // 🔥 Critical mobile fix
 
             frappe.show_alert({
                 message: "Invoice queued for background processing...",
                 indicator: "blue"
             });
 
-            // 🔥 Directly enqueue OCR (critical fix)
             await frappe.call({
                 method: "invoice_ocr.api.enqueue_ocr",
                 args: { docname: frm.doc.name }
@@ -221,7 +218,7 @@ async function handle_upload(frm, file) {
 
 
 // =================================================
-// 🧠 IMAGE COMPRESSION (Mobile Safe)
+// 🧠 IMAGE COMPRESSION (MOBILE SAFE)
 // =================================================
 function compressImage(file, maxWidth, quality) {
 
