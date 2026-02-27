@@ -1,20 +1,21 @@
 import re
 import os
-import base64
 import frappe
 from frappe.utils import getdate, today
 from invoice_ocr.vision.ocr_engine import run_vision_ocr
 
 
 # ============================================================
-# SAFE FILE RESOLUTION (MOBILE FIX CORE)
+# SAFE FILE RESOLUTION (CRITICAL FOR MOBILE)
 # ============================================================
 
 def _ensure_invoice_file(doc):
 
+    # If already saved in field
     if doc.invoice_file:
         return doc.invoice_file
 
+    # Try to auto-detect attachment
     attached = frappe.get_all(
         "File",
         filters={
@@ -29,6 +30,7 @@ def _ensure_invoice_file(doc):
         frappe.throw("Please upload invoice first")
 
     doc.invoice_file = attached[0].file_url
+    doc.flags.ignore_mandatory = True
     doc.save(ignore_permissions=True)
     frappe.db.commit()
 
@@ -36,7 +38,7 @@ def _ensure_invoice_file(doc):
 
 
 # ============================================================
-# ENQUEUE OCR (MOBILE SAFE)
+# ENQUEUE OCR (BACKGROUND SAFE)
 # ============================================================
 
 @frappe.whitelist()
@@ -86,10 +88,20 @@ def run_ocr(docname):
     file_url = _ensure_invoice_file(doc)
 
     # ========================================================
-    # FILE PATH
+    # FILE PATH RESOLUTION (SAFER)
     # ========================================================
 
-    file_doc = frappe.get_doc("File", {"file_url": file_url})
+    file_list = frappe.get_all(
+        "File",
+        filters={"file_url": file_url},
+        fields=["name"],
+        limit=1
+    )
+
+    if not file_list:
+        frappe.throw("File not found in File doctype")
+
+    file_doc = frappe.get_doc("File", file_list[0].name)
     file_path = file_doc.get_full_path()
 
     if not os.path.exists(file_path):
@@ -143,7 +155,7 @@ def run_ocr(docname):
         frappe.log_error(str(e), "AI Pipeline Error")
 
     # ========================================================
-    # ITEMS BUILD
+    # BUILD ITEMS
     # ========================================================
 
     doc.set("items", [])
@@ -174,7 +186,7 @@ def run_ocr(docname):
         })
 
     # ========================================================
-    # TAX BUILD
+    # BUILD TAXES
     # ========================================================
 
     doc.set("taxes", [])
@@ -197,10 +209,12 @@ def run_ocr(docname):
         })
 
     # ========================================================
-    # HEADER
+    # HEADER MAPPING
     # ========================================================
 
     header = state.get("header") or {}
+
+    doc.supplier_name = header.get("supplier_name")
 
     if header.get("supplier_name"):
         try:
@@ -225,6 +239,7 @@ def run_ocr(docname):
 
     try:
         financial_report = validate_financials(state)
+        doc.financial_risk = financial_report.get("risk_level")
         doc.financial_mismatch = financial_report.get("mismatch_amount")
         doc.is_financial_valid = financial_report.get("is_valid")
         doc.calculated_grand_total = financial_report.get("calculated_grand_total")
@@ -235,23 +250,30 @@ def run_ocr(docname):
     doc.tax_total = tax_total
     doc.grand_total = net_total + tax_total
 
+    doc.confidence = state.get("confidence", 60)
+
     doc.status = "Ready"
     doc.flags.ignore_mandatory = True
     doc.save(ignore_permissions=True, ignore_version=True)
     frappe.db.commit()
 
     return {"status": "Completed"}
-#===========================================================
-#        create_purchase
-#==========================================================
+
+
+
+# ============================================================
+# CREATE PURCHASE INVOICE (FULL PRODUCTION SAFE)
+# ============================================================
 
 @frappe.whitelist()
 def create_purchase_invoice(docname):
 
+    from frappe.utils import getdate, today
+
     doc = frappe.get_doc("Invoice OCR", docname)
 
     # ============================================================
-    # VALIDATIONS
+    # 1️⃣ VALIDATIONS
     # ============================================================
 
     if doc.status != "Ready":
@@ -271,10 +293,7 @@ def create_purchase_invoice(docname):
     if not company:
         frappe.throw("Default Company not configured.")
 
-    # ============================================================
-    # DUPLICATE CHECK
-    # ============================================================
-
+    # Duplicate Protection
     existing = frappe.db.exists(
         "Purchase Invoice",
         {
@@ -287,7 +306,7 @@ def create_purchase_invoice(docname):
         frappe.throw(f"Purchase Invoice already exists: {existing}")
 
     # ============================================================
-    # CREATE DOCUMENT
+    # 2️⃣ CREATE DOCUMENT
     # ============================================================
 
     pi = frappe.new_doc("Purchase Invoice")
@@ -301,11 +320,10 @@ def create_purchase_invoice(docname):
 
     pi.bill_date = invoice_date
     pi.posting_date = invoice_date
-
     pi.update_stock = 0
 
     # ============================================================
-    # EXPENSE ACCOUNT AUTO DETECT
+    # 3️⃣ EXPENSE ACCOUNT AUTO DETECT
     # ============================================================
 
     expense_account = frappe.db.get_value(
@@ -322,13 +340,16 @@ def create_purchase_invoice(docname):
         frappe.throw("No Expense Account found for this company.")
 
     # ============================================================
-    # ITEMS
+    # 4️⃣ ITEMS
     # ============================================================
 
     for row in doc.items:
 
         qty = row.qty or 1
         rate = row.rate or 0
+
+        if qty <= 0:
+            continue
 
         pi.append("items", {
             "item_name": row.item_name,
@@ -341,8 +362,11 @@ def create_purchase_invoice(docname):
             "expense_account": expense_account
         })
 
+    if not pi.items:
+        frappe.throw("No valid items to create Purchase Invoice.")
+
     # ============================================================
-    # TAXES
+    # 5️⃣ TAXES (SAFE VERSION – NO ACCOUNT HEAD ERROR)
     # ============================================================
 
     if doc.taxes:
@@ -358,7 +382,11 @@ def create_purchase_invoice(docname):
         )
 
         if tax_account:
+
             for tax in doc.taxes:
+
+                if not tax.tax_amount:
+                    continue
 
                 pi.append("taxes", {
                     "charge_type": tax.charge_type or "Actual",
@@ -368,21 +396,32 @@ def create_purchase_invoice(docname):
                     "tax_amount": tax.tax_amount or 0
                 })
 
-    # ============================================================
-    # INSERT + SUBMIT
-    # ============================================================
-
-    pi.insert(ignore_permissions=True)
-    pi.submit()
+        else:
+            frappe.logger().warning(
+                f"No Tax Account found for company {company}. Skipping tax rows."
+            )
 
     # ============================================================
-    # LINK BACK
+    # 6️⃣ INSERT + SUBMIT
+    # ============================================================
+
+    try:
+        pi.insert(ignore_permissions=True)
+        pi.submit()
+    except Exception as e:
+        frappe.log_error(str(e), "Purchase Invoice Submission Failed")
+        frappe.throw(
+            f"Purchase Invoice creation failed.\n\nError:\n{str(e)}"
+        )
+
+    # ============================================================
+    # 7️⃣ LINK BACK TO OCR DOCUMENT
     # ============================================================
 
     doc.purchase_invoice = pi.name
     doc.status = "Posted"
+    doc.flags.ignore_mandatory = True
     doc.save(ignore_permissions=True)
-
     frappe.db.commit()
 
     return {
