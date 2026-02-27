@@ -2,14 +2,16 @@ frappe.ui.form.on("Invoice OCR", {
 
     refresh(frm) {
 
-        // Disable manual save
+        // --------------------------------------------------
+        // Disable manual save button
+        // --------------------------------------------------
         frm.disable_save();
         frm.page.clear_primary_action();
+        frm.clear_custom_buttons();
 
-        // ============================================
-        // 📸 CAMERA BUTTON
-        // ============================================
-
+        // --------------------------------------------------
+        // 📸 CAMERA BUTTON (MOBILE SAFE)
+        // --------------------------------------------------
         frm.add_custom_button("📸 Capture Invoice", async () => {
 
             if (frm.is_new()) {
@@ -19,7 +21,7 @@ frappe.ui.form.on("Invoice OCR", {
             let input = document.createElement("input");
             input.type = "file";
             input.accept = "image/*";
-            input.capture = "environment";
+            input.capture = "environment"; // rear camera
 
             input.onchange = function (e) {
                 handle_upload(frm, e.target.files[0]);
@@ -30,10 +32,34 @@ frappe.ui.form.on("Invoice OCR", {
         }).addClass("btn-primary");
 
 
-        // ============================================
-        // ⏳ SAFE AUTO POLLING (NO RACE CONDITION)
-        // ============================================
+        // --------------------------------------------------
+        // 🖥 System Upload Trigger (Laptop / Manual Upload)
+        // --------------------------------------------------
+        if (frm.doc.invoice_file && frm.doc.status === "Draft") {
 
+            frm.add_custom_button("▶ Run OCR", async () => {
+
+                frappe.show_alert({
+                    message: "Invoice queued for background processing...",
+                    indicator: "blue"
+                });
+
+                await frappe.call({
+                    method: "invoice_ocr.api.enqueue_ocr",
+                    args: { docname: frm.doc.name }
+                });
+
+                setTimeout(() => {
+                    frm.reload_doc();
+                }, 3000);
+
+            }).addClass("btn-primary");
+        }
+
+
+        // --------------------------------------------------
+        // ⏳ PROCESSING INDICATOR
+        // --------------------------------------------------
         if (frm.doc.status === "Processing") {
 
             frm.dashboard.set_headline(
@@ -44,10 +70,9 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
 
-        // ============================================
-        // 🧾 CREATE PURCHASE INVOICE BUTTON
-        // ============================================
-
+        // --------------------------------------------------
+        // 🧾 CREATE PURCHASE INVOICE
+        // --------------------------------------------------
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
 
             frm.add_custom_button("🧾 Create Purchase Invoice", async () => {
@@ -63,18 +88,31 @@ frappe.ui.form.on("Invoice OCR", {
 
             }).addClass("btn-success");
         }
+
+
+        // --------------------------------------------------
+        // 📄 VIEW PURCHASE INVOICE
+        // --------------------------------------------------
+        if (frm.doc.purchase_invoice) {
+
+            frm.add_custom_button("📄 View Purchase Invoice", () => {
+                frappe.set_route(
+                    "Form",
+                    "Purchase Invoice",
+                    frm.doc.purchase_invoice
+                );
+            });
+        }
     },
 
 
-    // ============================================
-    // 🔥 AUTO QUEUE OCR WHEN FILE SET
-    // ============================================
-
+    // --------------------------------------------------
+    // 🔥 AUTO QUEUE WHEN SYSTEM FILE UPLOADED
+    // --------------------------------------------------
     async invoice_file(frm) {
 
         if (!frm.doc.invoice_file) return;
 
-        // Save ONLY if new document
         if (frm.is_new()) {
             await frm.save();
         }
@@ -89,7 +127,6 @@ frappe.ui.form.on("Invoice OCR", {
             args: { docname: frm.doc.name }
         });
 
-        // DO NOT reload immediately (prevents version conflict)
         setTimeout(() => {
             frm.reload_doc();
         }, 3000);
@@ -98,9 +135,8 @@ frappe.ui.form.on("Invoice OCR", {
 
 
 // =================================================
-// 🔁 SAFE POLLING FUNCTION (NO SAVE, NO CONFLICT)
+// 🔁 SAFE BACKGROUND POLLING
 // =================================================
-
 function start_safe_polling(frm) {
 
     if (frm.__polling) return;
@@ -114,6 +150,8 @@ function start_safe_polling(frm) {
             "status"
         );
 
+        if (!r.message) return;
+
         if (r.message.status !== "Processing") {
             clearInterval(interval);
             frm.__polling = false;
@@ -125,41 +163,66 @@ function start_safe_polling(frm) {
 
 
 // =================================================
-// 🚀 SAFE FILE UPLOAD
+// 🚀 CAMERA UPLOAD HANDLER (ENTERPRISE SAFE)
 // =================================================
-
 async function handle_upload(frm, file) {
 
     if (!file) return;
 
-    const compressed = await compressImage(file, 1200, 0.7);
+    try {
 
-    let formData = new FormData();
-    formData.append("file", compressed);
-    formData.append("doctype", "Invoice OCR");
-    formData.append("docname", frm.doc.name);
-    formData.append("is_private", 1);
+        const compressed = await compressImage(file, 1200, 0.7);
 
-    let response = await fetch("/api/method/upload_file", {
-        method: "POST",
-        body: formData,
-        headers: {
-            "X-Frappe-CSRF-Token": frappe.csrf_token
+        let formData = new FormData();
+        formData.append("file", compressed);
+        formData.append("doctype", "Invoice OCR");
+        formData.append("docname", frm.doc.name);
+        formData.append("is_private", 1);
+
+        let response = await fetch("/api/method/upload_file", {
+            method: "POST",
+            body: formData,
+            headers: {
+                "X-Frappe-CSRF-Token": frappe.csrf_token
+            }
+        });
+
+        let result = await response.json();
+
+        if (result.message && result.message.file_url) {
+
+            await frm.set_value("invoice_file", result.message.file_url);
+
+            frappe.show_alert({
+                message: "Invoice queued for background processing...",
+                indicator: "blue"
+            });
+
+            // 🔥 Directly enqueue OCR (critical fix)
+            await frappe.call({
+                method: "invoice_ocr.api.enqueue_ocr",
+                args: { docname: frm.doc.name }
+            });
+
+            setTimeout(() => {
+                frm.reload_doc();
+            }, 3000);
         }
-    });
 
-    let result = await response.json();
+    } catch (error) {
 
-    if (result.message && result.message.file_url) {
-        frm.set_value("invoice_file", result.message.file_url);
+        frappe.msgprint({
+            title: "Upload Error",
+            message: error.message || error,
+            indicator: "red"
+        });
     }
 }
 
 
 // =================================================
-// 🧠 IMAGE COMPRESSION
+// 🧠 IMAGE COMPRESSION (Mobile Safe)
 // =================================================
-
 function compressImage(file, maxWidth, quality) {
 
     return new Promise((resolve) => {

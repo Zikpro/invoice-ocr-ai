@@ -100,6 +100,8 @@ def enqueue_ocr(docname):
 
     doc = frappe.get_doc("Invoice OCR", docname)
 
+    doc.reload()
+
     if not doc.invoice_file:
         frappe.throw("Please upload invoice first")
 
