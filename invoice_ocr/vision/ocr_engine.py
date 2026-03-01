@@ -11,6 +11,21 @@ VISION_MODEL = "deepseek-ai/DeepSeek-OCR"
 TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
+# ============================================================
+# GET API KEY FROM SETTINGS (MARKETPLACE SAFE)
+# ============================================================
+
+def get_deepinfra_api_key():
+
+    settings = frappe.get_single("DeepInfra Settings")
+    api_key = settings.get_password("deepinfra_api_key")
+
+    if not api_key:
+        frappe.log_error("DeepInfra API key missing", "OCR Config Error")
+        return None
+
+    return api_key
+
 
 # ============================================================
 # FILE ENCODING (SAFE)
@@ -58,10 +73,9 @@ def extract_pdf_text(file_path):
 
 def run_image_ocr(file_path):
 
-    api_key = frappe.conf.get("deepinfra_api_key")
+    api_key = get_deepinfra_api_key()
 
     if not api_key:
-        frappe.log_error("DeepInfra API key missing", "OCR Config Error")
         return ""
 
     try:

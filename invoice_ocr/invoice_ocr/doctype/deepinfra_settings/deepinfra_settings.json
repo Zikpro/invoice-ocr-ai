@@ -1,0 +1,32 @@
+{
+  "doctype": "DocType",
+  "name": "DeepInfra Settings",
+  "module": "Invoice OCR",
+  "custom": 0,
+  "is_submittable": 0,
+  "track_changes": 1,
+  "issingle": 1,
+  "editable_grid": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "deepinfra_api_key"
+  ],
+  "fields": [
+    {
+      "fieldname": "deepinfra_api_key",
+      "label": "DeepInfra API Key",
+      "fieldtype": "Password",
+      "reqd": 1,
+      "description": "Enter your DeepInfra API key to enable OCR and AI processing."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 0
+    }
+  ]
+}

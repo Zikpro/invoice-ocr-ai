@@ -4,9 +4,9 @@ frappe.ui.form.on("Invoice OCR", {
 
         frm.clear_custom_buttons();
 
-        // --------------------------------------------------
-        // 📸 CAPTURE BUTTON
-        // --------------------------------------------------
+        // =========================================
+        // 📸 CAPTURE INVOICE
+        // =========================================
         frm.add_custom_button("📸 Capture Invoice", async () => {
 
             if (frm.is_new()) {
@@ -26,13 +26,32 @@ frappe.ui.form.on("Invoice OCR", {
 
         }).addClass("btn-primary");
 
-
-        // --------------------------------------------------
-        // ▶ RUN OCR BUTTON (ONLY IF FILE EXISTS)
-        // --------------------------------------------------
+         // =========================================
+        // ▶ RUN OCR
+        // =========================================
         if (frm.doc.invoice_file && frm.doc.status !== "Processing") {
 
-            frm.add_custom_button("▶ Run OCR", async () => {
+            let btn = frm.add_custom_button("▶ Run OCR", async () => {
+
+                // 🔐 Check API Key First
+                const r = await frappe.call({
+                    method: "frappe.client.get_value",
+                    args: {
+                        doctype: "DeepInfra Settings",
+                        fieldname: "deepinfra_api_key"
+                    }
+                });
+
+                if (!r.message || !r.message.deepinfra_api_key) {
+                    frappe.msgprint({
+                        title: "API Key Missing",
+                        message: "Please configure DeepInfra API key in DeepInfra Settings.",
+                        indicator: "red"
+                    });
+                    return;
+                }
+
+                btn.prop("disabled", true);
 
                 frappe.show_alert({
                     message: "Processing invoice...",
@@ -52,20 +71,19 @@ frappe.ui.form.on("Invoice OCR", {
         }
 
 
-        // --------------------------------------------------
+        // =========================================
         // ⏳ PROCESSING STATE
-        // --------------------------------------------------
+        // =========================================
         if (frm.doc.status === "Processing") {
 
             frm.dashboard.set_headline("⏳ Processing in background...");
-
             start_polling(frm);
         }
 
 
-        // --------------------------------------------------
+        // =========================================
         // 🧾 CREATE PURCHASE INVOICE
-        // --------------------------------------------------
+        // =========================================
         if (frm.doc.status === "Ready" && !frm.doc.purchase_invoice) {
 
             frm.add_custom_button("🧾 Create Purchase Invoice", async () => {
@@ -93,6 +111,12 @@ async function handle_upload(frm, file) {
 
     if (!file) return;
 
+    // Optional: File size limit (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+        frappe.msgprint("File size must be under 5MB.");
+        return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("doctype", "Invoice OCR");
@@ -112,22 +136,22 @@ async function handle_upload(frm, file) {
     if (result.message && result.message.file_url) {
 
         await frm.set_value("invoice_file", result.message.file_url);
-
-        // 🔥 IMPORTANT: SAVE DOCUMENT AFTER UPLOAD
         await frm.save();
 
         frappe.show_alert({
-            message: "Invoice uploaded. Click Run OCR.",
+            message: "Invoice uploaded successfully. Click Run OCR.",
             indicator: "green"
         });
 
         frm.reload_doc();
+    } else {
+        frappe.msgprint("Upload failed. Please try again.");
     }
 }
 
 
 // =================================================
-// SAFE POLLING
+// SAFE BACKGROUND POLLING
 // =================================================
 function start_polling(frm) {
 
@@ -152,3 +176,5 @@ function start_polling(frm) {
 
     }, 3000);
 }
+
+

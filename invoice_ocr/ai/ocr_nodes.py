@@ -10,14 +10,27 @@ MODEL = "deepseek-ai/DeepSeek-V3"
 
 
 # ============================================================
+# GET API KEY FROM SETTINGS (MARKETPLACE SAFE)
+# ============================================================
+
+def get_deepinfra_api_key():
+
+    settings = frappe.get_single("DeepInfra Settings")
+    api_key = settings.get_password("deepinfra_api_key")
+
+    if not api_key:
+        frappe.throw("DeepInfra API key not configured in DeepInfra Settings")
+
+    return api_key
+
+
+# ============================================================
 # DeepInfra Caller
 # ============================================================
 
 def call_deepinfra(prompt: str) -> dict:
-    api_key = frappe.conf.get("deepinfra_api_key")
 
-    if not api_key:
-        frappe.throw("DeepInfra API key not configured")
+    api_key = get_deepinfra_api_key()
 
     payload = {
         "model": MODEL,
@@ -76,6 +89,7 @@ def extract_items(state: dict):
 # ============================================================
 # TAXES
 # ============================================================
+
 def extract_taxes(state):
     import re
 
@@ -126,7 +140,6 @@ def extract_taxes(state):
 
         if "vat" in lower:
 
-            # Try next line for amount
             if i + 1 < len(lines):
                 next_line = lines[i + 1]
 
@@ -155,7 +168,6 @@ def extract_taxes(state):
 # ============================================================
 # CONFIDENCE
 # ============================================================
-from .confidence import calculate_confidence
 
 def score_confidence(state: dict):
 
