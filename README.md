@@ -109,6 +109,9 @@ bench get-app https://github.com/Zikpro/invoice-ocr-ai
 bench install-app invoice_ocr
 bench migrate
 bench restart
+```
+
+
 
 
 
