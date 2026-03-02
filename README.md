@@ -113,40 +113,16 @@ bench restart
 
 
 
-
-## 📸 Screenshots
-
-### 1️⃣ Upload Invoice
-![Upload Invoice](screenshots/01-upload-invoice.PNG)
-
-### 2️⃣ Draft Before OCR
-![Draft State](screenshots/02-draft-before-ocr.PNG)
-
-### 3️⃣ Background Processing
-![Processing](screenshots/03-processing-state.PNG)
-
-### 4️⃣ Header Extraction
-![Header Extraction](screenshots/04-header-extraction.PNG)
-
-### 5️⃣ Items & Taxes Extraction
-![Items and Taxes](screenshots/05-items-and-taxes.PNG)
-
-### 6️⃣ Raw OCR Output
-![Raw OCR](screenshots/06-raw-ocr-output.PNG)
-
-### 7️⃣ Semantic JSON Output
-![Semantic JSON](screenshots/07-semantic-json.PNG)
-
-### 8️⃣ Duplicate Protection
-![Duplicate Protection](screenshots/08-duplicate-protection.PNG)
-
-### 9️⃣ Purchase Invoice Created
-![Purchase Invoice](screenshots/09-purchase-invoice-created.PNG)
-
-### 📱 Mobile Processing
+![Upload Invoice](screenshots/01-upload-invoice.png)
+![Draft State](screenshots/02-draft-before-ocr.png)
+![Processing](screenshots/03-processing-state.png)
+![Header Extraction](screenshots/04-header-extraction.png)
+![Items & Taxes](screenshots/05-items-and-taxes.png)
+![Raw OCR](screenshots/06-raw-ocr-output.png)
+![Semantic JSON](screenshots/07-semantic-json.png)
+![Duplicate Protection](screenshots/08-duplicate-protection.png)
+![Purchase Invoice](screenshots/09-purchase-invoice-created.png)
 ![Mobile Processing](screenshots/11-mobile-processing.jpeg)
-
-### 📱 Mobile Menu
 ![Mobile Menu](screenshots/12-mobile-menu.jpeg)
 
 ---
