@@ -1,9 +1,9 @@
 app_name = "invoice_ocr"
-app_title = "OCR-AI"
+app_title = "Invoice OCR"
 app_publisher = "Zikpro Ltd"
-app_description = "AI-based Invoice OCR to Purchase Invoice automation"
+app_description = "AI-powered Invoice OCR to Purchase Invoice automation using DeepInfra"
 app_email = "info@zikpro.com"
-app_license = "Commercial"
+app_license = "MIT"
 
 # -------------------------------------------------
 # DocType JS (Cloud-safe)
