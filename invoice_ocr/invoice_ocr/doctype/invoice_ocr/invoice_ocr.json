@@ -1,10 +1,12 @@
 {
  "actions": [],
+ "autoname": "naming_series:",
  "creation": "2026-02-18 17:51:03.874423",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "naming_series",
   "invoice_section",
   "invoice_file",
   "header_section",
@@ -34,6 +36,14 @@
   "is_financial_valid"
  ],
  "fields": [
+  {
+   "default": "INV-OCR-.YYYY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "INV-OCR-.YYYY.-.####",
+   "reqd": 1
+  },
   {
    "fieldname": "invoice_section",
    "fieldtype": "Section Break",
