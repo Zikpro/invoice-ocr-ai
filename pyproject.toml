@@ -14,8 +14,8 @@ dependencies = [
 
 [tool.frappe]
 required_apps = [
-    "frappe>=15.0.0,<16.0.0",
-    "erpnext>=15.0.0,<16.0.0"
+    "frappe",
+    "erpnext"
 ]
 
 [build-system]
