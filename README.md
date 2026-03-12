@@ -106,7 +106,7 @@ Using Bench CLI:
 ```bash
 cd $PATH_TO_YOUR_BENCH
 bench get-app https://github.com/Zikpro/invoice-ocr-ai
-bench install-app invoice_ocr
+bench install-app zikpro_invoice_ocr
 bench migrate
 bench restart
 ```
