@@ -1,6 +1,6 @@
 [project]
 name = "zikpro_invoice_ocr"
-version = "0.0.2
+version = "0.0.2"
 description = "AI-based Invoice OCR to Purchase Invoice automation for ERPNext"
 authors = [
     { name = "zikpro", email = "info@zikpro.com" }
@@ -14,8 +14,8 @@ dependencies = [
 
 [tool.frappe]
 required_apps = [
-    "frappe",
-    "erpnext"
+    "frappe>=15.0.0 <16.0.0",
+    "erpnext>=15.0.0 <16.0.0"
 ]
 
 [build-system]
