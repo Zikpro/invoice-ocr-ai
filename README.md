@@ -1,4 +1,4 @@
-# Invoice OCR
+# Zikpro Invoice OCR
 
 AI-powered Invoice OCR Agent for ERPNext powered by DeepInfra.
 
@@ -99,16 +99,23 @@ The API key is securely stored in a Password field and never hardcoded.
 
 ---
 
+
+## Requirements
+
+- ERPNext v15 or later
+- Frappe Framework v15
+- DeepInfra API Key
+
+---
+
 ## 📦 Installation
 
 Using Bench CLI:
 
 ```bash
-cd $PATH_TO_YOUR_BENCH
 bench get-app https://github.com/Zikpro/invoice-ocr-ai
-bench install-app zikpro_invoice_ocr
+bench --site your-site-name install-app zikpro_invoice_ocr
 bench migrate
-bench restart
 ```
 
 
@@ -234,6 +241,17 @@ Invoice OCR works seamlessly on mobile devices.
 Users can trigger OCR actions directly from the mobile menu.
 
 ![Mobile Menu](screenshots/12-mobile-menu.jpeg)
+---
+
+
+## 🧠 AI Stack
+
+- DeepInfra Vision Models
+- Layout-aware OCR processing
+- AI agents pipeline
+- Financial validation engine
+- Supplier matching intelligence
+
 ---
 
 ## 🔒 Security
