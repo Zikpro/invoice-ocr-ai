@@ -6,10 +6,15 @@ authors = [
     { name = "zikpro", email = "info@zikpro.com" }
 ]
 requires-python = ">=3.10"
-
 dependencies = [
     "requests>=2.28.0",
     "pypdf>=4.0.0"
+]
+
+[tool.frappe]
+required_apps = [
+    "frappe@>=15.0.0 <16.0.0",
+    "erpnext@>=15.0.0 <16.0.0"
 ]
 
 [build-system]
