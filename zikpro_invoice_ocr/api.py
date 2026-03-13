@@ -368,7 +368,7 @@ def create_purchase_invoice(docname):
 @frappe.whitelist()
 def test_deepinfra_connection():
 
-    from zikpro_ocr.ai.ocr_nodes import call_deepinfra
+    from zikpro_invoice_ocr.ai.ocr_nodes import call_deepinfra
 
     # Simple test prompt
     response = call_deepinfra('Respond with JSON: {"status":"ok"}')
