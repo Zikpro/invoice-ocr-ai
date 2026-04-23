@@ -49,7 +49,6 @@ def _ensure_invoice_file(doc):
 
     doc.invoice_file = attached[0].file_url
     doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return doc.invoice_file
 
@@ -71,7 +70,6 @@ def enqueue_ocr(docname):
 
     doc.status = "Processing"
     doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     frappe.enqueue(
         method="zikpro_invoice_ocr.api.run_ocr",
@@ -116,7 +114,6 @@ def run_ocr(docname):
         frappe.log_error(str(e), "OCR Failed")
         doc.status = "Failed"
         doc.save(ignore_permissions=True)
-        frappe.db.commit()
         frappe.throw("OCR processing failed.")
 
     doc.raw_ocr_text = raw
@@ -252,7 +249,6 @@ def run_ocr(docname):
 
     doc.flags.ignore_mandatory = True
     doc.save(ignore_permissions=True, ignore_version=True)
-    frappe.db.commit()
 
     return {"status": "Completed"}
 
@@ -356,7 +352,6 @@ def create_purchase_invoice(docname):
     doc.purchase_invoice = pi.name
     doc.status = "Posted"
     doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return {
         "purchase_invoice": pi.name,

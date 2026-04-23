@@ -12,6 +12,28 @@ TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
 # ============================================================
+# 🔒 FILE PATH VALIDATION (MARKETPLACE SECURITY FIX)
+# ============================================================
+
+def _validate_file_path(file_path):
+    """
+    Prevent path traversal attacks
+    Only allow files inside frappe site directory
+    """
+
+    if not file_path:
+        frappe.throw(_("Invalid file path"))
+
+    abs_path = os.path.abspath(file_path)
+    site_path = frappe.get_site_path()
+
+    if not abs_path.startswith(site_path):
+        frappe.throw(_("Access to this file is not allowed"))
+
+    return abs_path
+
+
+# ============================================================
 # GET API KEY FROM SETTINGS (MARKETPLACE SAFE)
 # ============================================================
 
@@ -33,6 +55,8 @@ def get_deepinfra_api_key():
 
 def _encode_file_to_base64(file_path):
 
+    file_path = _validate_file_path(file_path)
+
     if not os.path.exists(file_path):
         frappe.throw(_("File not found"))
 
@@ -50,6 +74,8 @@ def _detect_mime_type(file_path):
 # ============================================================
 
 def extract_pdf_text(file_path):
+
+    file_path = _validate_file_path(file_path)
 
     try:
         reader = PdfReader(file_path)
@@ -72,6 +98,8 @@ def extract_pdf_text(file_path):
 # ============================================================
 
 def run_image_ocr(file_path):
+
+    file_path = _validate_file_path(file_path)
 
     api_key = get_deepinfra_api_key()
 
@@ -155,6 +183,8 @@ def run_vision_ocr(file_path):
     """
 
     try:
+
+        file_path = _validate_file_path(file_path)
 
         if not os.path.exists(file_path):
             return ""
