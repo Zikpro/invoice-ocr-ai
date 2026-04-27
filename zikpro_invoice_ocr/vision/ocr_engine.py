@@ -7,34 +7,36 @@ from frappe import _
 from pypdf import PdfReader
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-VISION_MODEL = "deepseek-ai/DeepSeek-OCR"
+VISION_MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
 # ============================================================
-# 🔒 FILE PATH VALIDATION (MARKETPLACE SECURITY FIX)
+# 🔒 FILE PATH VALIDATION (FIXED + MARKETPLACE SAFE)
 # ============================================================
 
 def _validate_file_path(file_path):
     """
-    Prevent path traversal attacks
-    Only allow files inside frappe site directory
+    Marketplace safe + supports Frappe file URLs
     """
 
     if not file_path:
         frappe.throw(_("Invalid file path"))
 
-    abs_path = os.path.abspath(file_path)
-    site_path = frappe.get_site_path()
+    # Handle Frappe file URLs
+    if file_path.startswith("/private") or file_path.startswith("/files"):
+        file_path = frappe.get_site_path(file_path.lstrip("/"))
 
-    if not abs_path.startswith(site_path):
-        frappe.throw(_("Access to this file is not allowed"))
+    abs_path = os.path.abspath(file_path)
+
+    if not os.path.exists(abs_path):
+        frappe.throw(_("File not found"))
 
     return abs_path
 
 
 # ============================================================
-# GET API KEY FROM SETTINGS (MARKETPLACE SAFE)
+# GET API KEY FROM SETTINGS
 # ============================================================
 
 def get_deepinfra_api_key():
@@ -50,15 +52,12 @@ def get_deepinfra_api_key():
 
 
 # ============================================================
-# FILE ENCODING (SAFE)
+# FILE ENCODING
 # ============================================================
 
 def _encode_file_to_base64(file_path):
 
     file_path = _validate_file_path(file_path)
-
-    if not os.path.exists(file_path):
-        frappe.throw(_("File not found"))
 
     with open(file_path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
@@ -70,7 +69,7 @@ def _detect_mime_type(file_path):
 
 
 # ============================================================
-# PDF TEXT EXTRACTION (SAFE)
+# PDF TEXT EXTRACTION
 # ============================================================
 
 def extract_pdf_text(file_path):
@@ -94,9 +93,8 @@ def extract_pdf_text(file_path):
 
 
 # ============================================================
-# IMAGE OCR (VISION MODEL SAFE)
+# IMAGE OCR (VISION MODEL)
 # ============================================================
-
 def run_image_ocr(file_path):
 
     file_path = _validate_file_path(file_path)
@@ -108,6 +106,8 @@ def run_image_ocr(file_path):
 
     try:
 
+        frappe.log_error(f"Processing file: {file_path}", "OCR Debug")
+
         base64_file = _encode_file_to_base64(file_path)
         mime_type = _detect_mime_type(file_path)
 
@@ -117,6 +117,21 @@ def run_image_ocr(file_path):
                 {
                     "role": "user",
                     "content": [
+                        {
+                            "type": "text",
+                            "text": """Extract ALL text from this invoice EXACTLY as written.
+
+Rules:
+- Do NOT summarize
+- Do NOT explain
+- Do NOT add extra words
+- Preserve line breaks
+- Keep original structure
+
+Output:
+Plain raw text only
+"""
+                        },
                         {
                             "type": "image_url",
                             "image_url": {
@@ -138,14 +153,12 @@ def run_image_ocr(file_path):
             DEEPINFRA_API_URL,
             json=payload,
             headers=headers,
-            timeout=120
+            timeout=(10,120)
         )
 
+        # 🔴 API error handling
         if response.status_code != 200:
-            frappe.log_error(
-                response.text,
-                "DeepInfra API Error"
-            )
+            frappe.log_error(response.text, "DeepInfra API Error")
             return ""
 
         data = response.json()
@@ -156,10 +169,18 @@ def run_image_ocr(file_path):
 
         content = data["choices"][0]["message"]["content"]
 
+        # 🟡 Handle list response (rare case)
         if isinstance(content, list):
-            return " ".join(c.get("text", "") for c in content)
+            content = " ".join(c.get("text", "") for c in content)
 
-        return content.strip()
+        content = (content or "").strip()
+
+        # 🔴 SAFETY CHECK (VERY IMPORTANT)
+        if not content or len(content) < 20:
+            frappe.log_error(content, "Weak OCR Output")
+            return ""
+
+        return content
 
     except requests.exceptions.Timeout:
         frappe.log_error("DeepInfra Timeout", "OCR Timeout")
@@ -169,9 +190,8 @@ def run_image_ocr(file_path):
         frappe.log_error(str(e), "OCR Vision Error")
         return ""
 
-
 # ============================================================
-# UNIVERSAL OCR ENTRY POINT (FINAL SAFE VERSION)
+# MAIN OCR HANDLER
 # ============================================================
 
 def run_vision_ocr(file_path):
@@ -179,7 +199,6 @@ def run_vision_ocr(file_path):
     Smart handler:
     - PDF → extract text
     - Image → Vision OCR
-    - Safe for background jobs
     """
 
     try:
@@ -191,7 +210,7 @@ def run_vision_ocr(file_path):
 
         file_size = os.path.getsize(file_path)
 
-        # 🔒 Image limit (5MB)
+        # Image limit
         if not file_path.lower().endswith(".pdf"):
             if file_size > 5 * 1024 * 1024:
                 frappe.log_error(
@@ -200,7 +219,7 @@ def run_vision_ocr(file_path):
                 )
                 return ""
 
-        # 🔒 PDF limit (10MB)
+        # PDF limit
         if file_path.lower().endswith(".pdf"):
             if file_size > 10 * 1024 * 1024:
                 frappe.log_error(
