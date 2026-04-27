@@ -7,7 +7,7 @@ from frappe import _
 from pypdf import PdfReader
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-VISION_MODEL = "deepseek-ai/DeepSeek-OCR"
+VISION_MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 TEXT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
@@ -95,7 +95,6 @@ def extract_pdf_text(file_path):
 # ============================================================
 # IMAGE OCR (VISION MODEL)
 # ============================================================
-
 def run_image_ocr(file_path):
 
     file_path = _validate_file_path(file_path)
@@ -119,6 +118,21 @@ def run_image_ocr(file_path):
                     "role": "user",
                     "content": [
                         {
+                            "type": "text",
+                            "text": """Extract ALL text from this invoice EXACTLY as written.
+
+Rules:
+- Do NOT summarize
+- Do NOT explain
+- Do NOT add extra words
+- Preserve line breaks
+- Keep original structure
+
+Output:
+Plain raw text only
+"""
+                        },
+                        {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:{mime_type};base64,{base64_file}"
@@ -139,9 +153,10 @@ def run_image_ocr(file_path):
             DEEPINFRA_API_URL,
             json=payload,
             headers=headers,
-            timeout=120
+            timeout=(10,120)
         )
 
+        # 🔴 API error handling
         if response.status_code != 200:
             frappe.log_error(response.text, "DeepInfra API Error")
             return ""
@@ -154,10 +169,18 @@ def run_image_ocr(file_path):
 
         content = data["choices"][0]["message"]["content"]
 
+        # 🟡 Handle list response (rare case)
         if isinstance(content, list):
-            return " ".join(c.get("text", "") for c in content)
+            content = " ".join(c.get("text", "") for c in content)
 
-        return content.strip()
+        content = (content or "").strip()
+
+        # 🔴 SAFETY CHECK (VERY IMPORTANT)
+        if not content or len(content) < 20:
+            frappe.log_error(content, "Weak OCR Output")
+            return ""
+
+        return content
 
     except requests.exceptions.Timeout:
         frappe.log_error("DeepInfra Timeout", "OCR Timeout")
@@ -166,7 +189,6 @@ def run_image_ocr(file_path):
     except Exception as e:
         frappe.log_error(str(e), "OCR Vision Error")
         return ""
-
 
 # ============================================================
 # MAIN OCR HANDLER
