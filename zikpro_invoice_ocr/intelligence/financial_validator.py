@@ -36,8 +36,10 @@ def validate_financials(state: dict):
 
     for item in items:
 
-        # Ignore non-financial lines
-        if item.get("classification") != "VALID_ITEM":
+        if item.get("classification") not in [
+            "VALID_ITEM",
+            "CHARGE_ROW"
+        ]:
             continue
 
         qty = safe_float(item.get("qty"))
