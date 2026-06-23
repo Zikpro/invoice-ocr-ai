@@ -116,7 +116,7 @@
    "fieldname": "items",
    "fieldtype": "Table",
    "label": "Invoice Items",
-   "options": "Purchase Invoice Item"
+   "options": "Invoice OCR Item"
   },
   {
    "fieldname": "taxes_section",

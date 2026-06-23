@@ -2,15 +2,17 @@
 # HEADER PROMPT
 # ============================================================
 HEADER_PROMPT_TEMPLATE = """
-You are extracting header from a {country} {invoice_type} invoice.
+Extract invoice header information.
 
-Return JSON:
-{{
-  "supplier_name": null,
-  "invoice_number": null,
-  "invoice_date": null,
-  "currency": null
-}}
+Return ONLY valid JSON.
+
+{
+    "invoice_number": "",
+    "invoice_date": "",
+    "supplier_name": "",
+    "currency": "",
+    "grand_total": 0
+}
 """
 
 

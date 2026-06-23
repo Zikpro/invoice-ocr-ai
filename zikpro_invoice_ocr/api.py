@@ -85,7 +85,6 @@ def enqueue_ocr(docname):
 # ============================================================
 # RUN OCR (FULL PRODUCTION SAFE)
 # ============================================================
-
 @frappe.whitelist()
 def run_ocr(docname):
 
@@ -99,21 +98,27 @@ def run_ocr(docname):
     from zikpro_invoice_ocr.intelligence.financial_validator import validate_financials
 
     doc = frappe.get_doc("Invoice OCR", docname)
+
     file_url = _ensure_invoice_file(doc)
     file_path = _get_file_path(file_url)
 
     size = os.path.getsize(file_path)
+
     if file_path.lower().endswith(".pdf") and size > 10 * 1024 * 1024:
         frappe.throw("PDF too large. Max 10MB.")
+
     if not file_path.lower().endswith(".pdf") and size > 5 * 1024 * 1024:
         frappe.throw("Image too large. Max 5MB.")
 
     try:
         raw = run_vision_ocr(file_path)
+
     except Exception as e:
         frappe.log_error(str(e), "OCR Failed")
+
         doc.status = "Failed"
         doc.save(ignore_permissions=True)
+
         frappe.throw("OCR processing failed.")
 
     doc.raw_ocr_text = raw
@@ -133,15 +138,22 @@ def run_ocr(docname):
         state = extract_items_agent(state)
         state = extract_tax_agent(state)
         state = classify_lines(state)
+
     except Exception as e:
         frappe.log_error(str(e), "AI Pipeline Error")
 
+    # =====================================================
+    # ITEMS
+    # =====================================================
+
     doc.set("items", [])
+
     net_total = 0
+    charge_total = 0
 
     for it in state.get("items", []):
-        if it.get("classification") != "VALID_ITEM":
-            continue
+
+        classification = it.get("classification")
 
         qty = float(it.get("qty") or 1)
         rate = float(it.get("rate") or 0)
@@ -150,17 +162,29 @@ def run_ocr(docname):
         if amount <= 0:
             continue
 
-        net_total += amount
+        if classification == "VALID_ITEM":
+            net_total += amount
+
+        elif classification == "CHARGE_ROW":
+            charge_total += amount
+
+        else:
+            continue
 
         doc.append("items", {
-            "item_name": it.get("item_name"),
+            "ocr_item_name": it.get("item_name"),
             "qty": qty,
             "rate": rate,
             "amount": amount,
-            "uom": "Nos"
+            "match_confidence": 0
         })
 
+    # =====================================================
+    # TAXES
+    # =====================================================
+
     doc.set("taxes", [])
+
     tax_total = 0
 
     company = frappe.defaults.get_user_default("Company")
@@ -176,6 +200,7 @@ def run_ocr(docname):
     )
 
     for tx in state.get("taxes", []):
+
         amount = float(tx.get("amount") or 0)
 
         if amount <= 0:
@@ -191,21 +216,30 @@ def run_ocr(docname):
             "tax_amount": amount
         })
 
+    # =====================================================
+    # HEADER
+    # =====================================================
+
     header = state.get("header") or {}
 
     doc.invoice_number = header.get("invoice_number")
 
     try:
         doc.invoice_date = getdate(header.get("invoice_date"))
+
     except Exception:
         doc.invoice_date = None
 
     if not doc.currency:
-        doc.currency = header.get("currency") or frappe.defaults.get_global_default("currency")
+        doc.currency = (
+            header.get("currency")
+            or frappe.defaults.get_global_default("currency")
+        )
 
     supplier_name = header.get("supplier_name")
 
     if supplier_name:
+
         try:
             result = intelligent_supplier_match(supplier_name)
 
@@ -216,26 +250,42 @@ def run_ocr(docname):
 
             if matched_supplier:
                 doc.supplier = matched_supplier
+
             else:
                 exact = frappe.db.get_value(
                     "Supplier",
                     {"supplier_name": supplier_name},
                     "name"
                 )
+
                 if exact:
                     doc.supplier = exact
 
         except Exception as e:
             frappe.log_error(str(e), "Supplier Matching Error")
 
+    # =====================================================
+    # FINANCIALS
+    # =====================================================
+
     state["net_total"] = net_total
     state["tax_total"] = tax_total
+    state["charge_total"] = charge_total
+
+    state["detected_grand_total"] = float(
+        header.get("grand_total") or 0
+    )
 
     report = validate_financials(state)
 
     doc.net_total = net_total
     doc.tax_total = tax_total
-    doc.grand_total = net_total + tax_total
+
+    doc.grand_total = (
+        net_total
+        + tax_total
+        + charge_total
+    )
 
     doc.financial_risk = report.get("risk_level")
     doc.financial_mismatch = report.get("mismatch_amount")
@@ -243,14 +293,29 @@ def run_ocr(docname):
     doc.calculated_grand_total = report.get("calculated_grand_total")
 
     state["financial_validation"] = report
-    doc.db_set("semantic_invoice_json", frappe.as_json(state, indent=2))
-    doc.db_set("confidence", state.get("confidence", 60))
+
+    doc.db_set(
+        "semantic_invoice_json",
+        frappe.as_json(state, indent=2)
+    )
+
+    doc.db_set(
+        "confidence",
+        state.get("confidence", 60)
+    )
+
     doc.db_set("status", "Ready")
 
     doc.flags.ignore_mandatory = True
-    doc.save(ignore_permissions=True, ignore_version=True)
 
-    return {"status": "Completed"}
+    doc.save(
+        ignore_permissions=True,
+        ignore_version=True
+    )
+
+    return {
+        "status": "Completed"
+    }
 
 
 @frappe.whitelist()
@@ -309,17 +374,44 @@ def create_purchase_invoice(docname):
     if not expense_account:
         frappe.throw("No Expense Account found.")
 
+    # ==================================================
+    # ITEMS
+    # ==================================================
+
     for row in doc.items:
-        pi.append("items", {
-            "item_name": row.item_name,
-            "description": row.item_name,
-            "qty": row.qty,
-            "uom": row.uom or "Nos",
-            "stock_uom": row.uom or "Nos",
-            "conversion_factor": 1,
-            "rate": row.rate,
-            "expense_account": expense_account
-        })
+
+        item_code = getattr(row, "matched_item", None)
+
+        if item_code:
+
+            pi.append("items", {
+                "item_code": item_code,
+                "qty": row.qty,
+                "uom": "Nos",
+                "stock_uom": "Nos",
+                "conversion_factor": 1,
+                "rate": row.rate,
+                "expense_account": expense_account
+            })
+
+        else:
+
+            # Fallback when no ERP Item match exists
+
+            pi.append("items", {
+                "item_name": row.ocr_item_name,
+                "description": row.ocr_item_name,
+                "qty": row.qty,
+                "uom": "Nos",
+                "stock_uom": "Nos",
+                "conversion_factor": 1,
+                "rate": row.rate,
+                "expense_account": expense_account
+            })
+
+    # ==================================================
+    # TAXES
+    # ==================================================
 
     tax_account = frappe.db.get_value(
         "Account",
@@ -332,40 +424,44 @@ def create_purchase_invoice(docname):
     )
 
     if tax_account:
+
         for tax in doc.taxes:
-            if tax.tax_amount:
-                pi.append("taxes", {
-                    "charge_type": tax.charge_type or "Actual",
-                    "account_head": tax_account,
-                    "description": tax.description or "Tax",
-                    "rate": tax.rate or 0,
-                    "tax_amount": tax.tax_amount
-                })
+
+            if not tax.tax_amount:
+                continue
+
+            pi.append("taxes", {
+                "charge_type": tax.charge_type or "Actual",
+                "account_head": tax_account,
+                "description": tax.description or "Tax",
+                "rate": tax.rate or 0,
+                "tax_amount": tax.tax_amount
+            })
+
+    # ==================================================
+    # SAVE & SUBMIT
+    # ==================================================
 
     try:
         pi.insert(ignore_permissions=True)
         pi.submit()
-    except Exception as e:
-        frappe.log_error(str(e), "Purchase Invoice Creation Failed")
-        frappe.throw(str(e))
+
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Purchase Invoice Creation Failed"
+        )
+        raise
 
     doc.purchase_invoice = pi.name
     doc.status = "Posted"
-    doc.save(ignore_permissions=True)
+
+    doc.save(
+        ignore_permissions=True,
+        ignore_version=True
+    )
 
     return {
         "purchase_invoice": pi.name,
         "status": "Submitted"
     }
-
-
-
-@frappe.whitelist()
-def test_deepinfra_connection():
-
-    from zikpro_invoice_ocr.ai.ocr_nodes import call_deepinfra
-
-    # Simple test prompt
-    response = call_deepinfra('Respond with JSON: {"status":"ok"}')
-
-    return response
