@@ -55,7 +55,14 @@ def call_deepinfra(prompt: str) -> dict:
     data = res.json()
     content = data["choices"][0]["message"]["content"]
 
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except Exception as e:
+        frappe.log_error(
+            f"DeepInfra response parse failed: {str(e)} | Content: {content}",
+            "DeepInfra JSON Parse Error"
+        )
+        return content
 
 
 # ============================================================

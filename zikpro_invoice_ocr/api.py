@@ -1,7 +1,9 @@
 import os
+import re
 import frappe
 from frappe.utils import getdate, today
 from zikpro_invoice_ocr.vision.ocr_engine import run_vision_ocr
+from zikpro_invoice_ocr.ai.ocr_nodes import score_confidence
 
 
 # ============================================================
@@ -53,6 +55,31 @@ def _ensure_invoice_file(doc):
     return doc.invoice_file
 
 
+def _trim_page_bleeding(text: str) -> str:
+    if not text:
+        return text
+
+    match = re.search(r"(?i)page\s*\d+\s*of\s*\d+", text)
+    if not match:
+        return text
+
+    return text[: match.start()].rstrip()
+
+
+def _has_header_content(header: dict) -> bool:
+    if not isinstance(header, dict):
+        return False
+
+    return any([
+        header.get("invoice_number"),
+        header.get("supplier_name"),
+        header.get("grand_total") is not None and header.get("grand_total") > 0,
+        header.get("net_total") is not None and header.get("net_total") > 0,
+        header.get("tax_total") is not None and header.get("tax_total") > 0,
+        header.get("currency")
+    ])
+
+
 # ============================================================
 # ENQUEUE OCR
 # ============================================================
@@ -95,6 +122,7 @@ def run_ocr(docname):
     from zikpro_invoice_ocr.ai.agents.tax_agent import extract_tax_agent
     from zikpro_invoice_ocr.intelligence.line_classifier import classify_lines
     from zikpro_invoice_ocr.intelligence.supplier_matcher import intelligent_supplier_match
+    from zikpro_invoice_ocr.intelligence.item_matcher import intelligent_item_match
     from zikpro_invoice_ocr.intelligence.financial_validator import validate_financials
 
     doc = frappe.get_doc("Invoice OCR", docname)
@@ -121,10 +149,22 @@ def run_ocr(docname):
 
         frappe.throw("OCR processing failed.")
 
+    # =====================================================
+    # VALIDATE RAW OCR TEXT
+    # =====================================================
+    if not raw or len(raw.strip()) < 50:
+        frappe.log_error(f"Weak OCR output: {len(raw) if raw else 0} chars", "OCR Validation Error")
+        
+        doc.status = "Failed"
+        doc.save(ignore_permissions=True)
+        
+        frappe.throw("Could not extract text from invoice. Please ensure image is clear and readable.")
+
     doc.raw_ocr_text = raw
+    cleaned_text = _trim_page_bleeding(raw)
 
     state = {
-        "ocr_text": raw,
+        "ocr_text": cleaned_text,
         "header": {},
         "items": [],
         "taxes": [],
@@ -132,15 +172,48 @@ def run_ocr(docname):
     }
 
     try:
+        frappe.logger().info("[RUN_OCR] Detecting layout")
         state = detect_layout(state)
+        frappe.logger().info(f"[RUN_OCR] Layout: {state.get('layout')}")
+
+        frappe.logger().info("[RUN_OCR] Building context")
         state = build_context(state)
+        frappe.logger().info(f"[RUN_OCR] Context: {state.get('context')}")
+
+        frappe.logger().info("[RUN_OCR] Extracting header")
         state = extract_header_agent(state)
+        frappe.logger().info(f"[RUN_OCR] Header: {state.get('header')}")
+
+        if not _has_header_content(state.get('header', {})):
+            frappe.log_error("Header extraction returned no meaningful values", "OCR Stage Failure")
+            doc.status = "Failed"
+            doc.save(ignore_permissions=True)
+            frappe.throw("Invoice header extraction failed. Please verify the invoice content.")
+
+        frappe.logger().info("[RUN_OCR] Extracting items")
         state = extract_items_agent(state)
+        frappe.logger().info(f"[RUN_OCR] Items extracted: {len(state.get('items') or [])}")
+
+        if not isinstance(state.get('items'), list) or len(state.get('items') or []) == 0:
+            frappe.log_error("Item extraction returned no rows", "OCR Stage Failure")
+            doc.status = "Failed"
+            doc.save(ignore_permissions=True)
+            frappe.throw("Invoice item extraction failed. Please check the invoice layout.")
+
+        frappe.logger().info("[RUN_OCR] Extracting taxes")
         state = extract_tax_agent(state)
+        state["taxes"] = state.get("taxes") or []
+        frappe.logger().info(f"[RUN_OCR] Taxes extracted: {len(state.get('taxes') or [])}")
+
+        frappe.logger().info("[RUN_OCR] Classifying extracted lines")
         state = classify_lines(state)
+        frappe.logger().info(f"[RUN_OCR] Classified items: {state.get('items')}")
 
     except Exception as e:
         frappe.log_error(str(e), "AI Pipeline Error")
+        doc.status = "Failed"
+        doc.save(ignore_permissions=True)
+        frappe.throw("AI pipeline failed during invoice extraction.")
 
     # =====================================================
     # ITEMS
@@ -171,12 +244,26 @@ def run_ocr(docname):
         else:
             continue
 
+        match = intelligent_item_match(it.get("item_name"))
+        matched_item = match.get("item")
+        match_confidence = match.get("confidence", 0)
+        multiple_matches = match.get("multiple_matches", False)
+
+        if matched_item:
+            status = "Matched"
+        elif multiple_matches:
+            status = "Multiple Matches"
+        else:
+            status = "Pending"
+
         doc.append("items", {
             "ocr_item_name": it.get("item_name"),
             "qty": qty,
             "rate": rate,
             "amount": amount,
-            "match_confidence": 0
+            "matched_item": matched_item,
+            "match_confidence": match_confidence,
+            "status": status
         })
 
     # =====================================================
@@ -230,13 +317,14 @@ def run_ocr(docname):
     except Exception:
         doc.invoice_date = None
 
-    if not doc.currency:
-        doc.currency = (
-            header.get("currency")
-            or frappe.defaults.get_global_default("currency")
-        )
+    doc.currency = (
+        header.get("currency")
+        or doc.currency
+        or frappe.defaults.get_global_default("currency")
+    )
 
     supplier_name = header.get("supplier_name")
+    doc.supplier_name = supplier_name
 
     if supplier_name:
 
@@ -293,6 +381,7 @@ def run_ocr(docname):
     doc.calculated_grand_total = report.get("calculated_grand_total")
 
     state["financial_validation"] = report
+    state = score_confidence(state)
 
     doc.db_set(
         "semantic_invoice_json",

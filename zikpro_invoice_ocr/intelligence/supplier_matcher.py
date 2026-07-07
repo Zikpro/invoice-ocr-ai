@@ -1,5 +1,6 @@
+import re
 import frappe
-import difflib
+from rapidfuzz import fuzz
 
 
 def intelligent_supplier_match(detected_name: str):
@@ -16,40 +17,64 @@ def intelligent_supplier_match(detected_name: str):
     if not detected_name:
         return {"supplier": None, "confidence": 0, "multiple_matches": False}
 
-    detected_name = detected_name.strip().lower()
+    def _normalize_text(value):
+        if not value:
+            return ""
+        text = str(value).strip().lower()
+        text = re.sub(r"[^a-z0-9\s]", " ", text)
+        return " ".join(text.split())
 
-    suppliers = frappe.get_all(
-        "Supplier",
-        fields=["name", "supplier_name"]
-    )
+    detected_norm = _normalize_text(detected_name)
+
+    try:
+        suppliers = frappe.get_all(
+            "Supplier",
+            fields=["name", "supplier_name", "supplier_code", "tax_id"]
+        )
+    except Exception:
+        suppliers = frappe.get_all(
+            "Supplier",
+            fields=["name", "supplier_name"]
+        )
 
     # ----------------------------
     # 1️⃣ Exact Match (Strongest)
     # ----------------------------
-    for s in suppliers:
-        if s.supplier_name and s.supplier_name.lower() == detected_name:
-            return {
-                "supplier": s.name,
-                "confidence": 100,
-                "multiple_matches": False
-            }
+    for supplier in suppliers:
+        supplier_name = supplier.get("supplier_name") or ""
+        supplier_code = supplier.get("supplier_code") or supplier.get("name") or ""
+        tax_id = supplier.get("tax_id") or ""
+
+        if _normalize_text(supplier_name) == detected_norm:
+            return {"supplier": supplier["name"], "confidence": 100, "multiple_matches": False}
+
+        if _normalize_text(supplier_code) == detected_norm:
+            return {"supplier": supplier["name"], "confidence": 100, "multiple_matches": False}
+
+        if _normalize_text(tax_id) == detected_norm:
+            return {"supplier": supplier["name"], "confidence": 100, "multiple_matches": False}
 
     # ----------------------------
     # 2️⃣ Fuzzy Similarity
     # ----------------------------
     scores = []
 
-    for s in suppliers:
-        if not s.supplier_name:
-            continue
+    for supplier in suppliers:
+        supplier_name = supplier.get("supplier_name") or ""
+        supplier_code = supplier.get("supplier_code") or supplier.get("name") or ""
+        tax_id = supplier.get("tax_id") or ""
 
-        score = difflib.SequenceMatcher(
-            None,
-            detected_name,
-            s.supplier_name.lower()
-        ).ratio()
+        for candidate in {supplier_name, supplier_code, tax_id}:
+            candidate_norm = _normalize_text(candidate)
+            if not candidate_norm:
+                continue
 
-        scores.append((score, s.name))
+            score = max(
+                fuzz.token_sort_ratio(detected_norm, candidate_norm),
+                fuzz.partial_ratio(detected_norm, candidate_norm),
+                fuzz.ratio(detected_norm, candidate_norm)
+            )
+            scores.append((score, supplier["name"]))
 
     if not scores:
         return {"supplier": None, "confidence": 0, "multiple_matches": False}
@@ -58,13 +83,13 @@ def intelligent_supplier_match(detected_name: str):
 
     best_score, best_supplier = scores[0]
 
-    # Convert to %
-    confidence = int(best_score * 100)
+    # Already on 0-100 scale
+    confidence = int(best_score)
 
     # ----------------------------
     # 3️⃣ If too many similar matches
     # ----------------------------
-    close_matches = [s for s in scores if s[0] > 0.75]
+    close_matches = [s for s in scores if s[0] >= 80]
 
     if len(close_matches) > 1:
         return {

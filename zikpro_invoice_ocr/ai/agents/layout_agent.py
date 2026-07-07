@@ -44,7 +44,7 @@ def detect_layout(state: dict):
     # -------------------------------
     elif "labour" in text or "professional" in text:
         layout["country_pattern"] = "GENERIC"
-        layout["invoice_type"] = "Service"
+        layout["invoice_type"] = "SERVICE"
 
     else:
         layout["country_pattern"] = "GENERIC"
